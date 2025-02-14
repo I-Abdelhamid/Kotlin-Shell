@@ -2,7 +2,7 @@ import java.io.File
 import java.nio.file.Paths
 
 fun main() {
-    val builtins = setOf("echo", "exit", "type", "pwd")
+    val builtins = setOf("echo", "exit", "type", "pwd", "cd")
     val paths = System.getenv("PATH")?.split(":") ?: emptyList() // Get directories from PATH
 
     while (true) {
@@ -18,9 +18,25 @@ fun main() {
             command == "exit" && args == listOf("0") -> return // Exit with status 0
             command == "echo" -> println(args.joinToString(" ")) // Print echo arguments
             command == "pwd" -> println(Paths.get("").toAbsolutePath()) // Handle pwd command
+            command == "cd" -> handleCdCommand(args) // Handle cd command
             command == "type" -> handleTypeCommand(args, builtins, paths)
             else -> executeCommand(command, args, paths)
         }
+    }
+}
+
+fun handleCdCommand(args: List<String>) {
+    if (args.isEmpty()) {
+        println("cd: missing argument")
+        return
+    }
+    val dir = args[0]
+    val file = File(dir)
+
+    if (file.isDirectory) {
+        System.setProperty("user.dir", file.absolutePath) // Change working directory
+    } else {
+        println("cd: $dir: No such file or directory")
     }
 }
 
