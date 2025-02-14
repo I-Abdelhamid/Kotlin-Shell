@@ -33,22 +33,19 @@ fun handleTypeCommand(args: List<String>, builtins: Set<String>, paths: List<Str
 }
 
 fun executeCommand(command: String, args: List<String>, paths: List<String>) {
-    val executable = findExecutable(command, paths)
-    if (executable != null) {
-        try {
-            val process = ProcessBuilder(listOf(executable) + args)
-                .redirectInput(ProcessBuilder.Redirect.INHERIT)
-                .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-                .redirectError(ProcessBuilder.Redirect.INHERIT)
-                .start()
-            process.waitFor() // Wait for process to complete
-        } catch (e: Exception) {
-            println("Failed to execute $command")
-        }
-    } else {
+    val process = try {
+        ProcessBuilder(listOf(command) + args)
+            .redirectInput(ProcessBuilder.Redirect.INHERIT)
+            .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start()
+    } catch (e: Exception) {
         println("$command: command not found")
+        return
     }
+    process.waitFor() // Wait for process completion
 }
+
 
 fun findExecutable(command: String, paths: List<String>): String? {
     return paths.map { File(it, command) }
