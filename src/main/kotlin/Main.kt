@@ -18,9 +18,32 @@ class DirectoryContext {
     }
 }
 
+// Command for 'echo' functionality
+class EchoCommand : Command {
+    override fun execute(args: List<String>) {
+        // Join arguments and handle single quotes correctly
+        val processedArgs = args.map { removeSingleQuotes(it) }
+        println(processedArgs.joinToString(" "))
+    }
+
+    private fun removeSingleQuotes(input: String): String {
+        return if (input.startsWith("'") && input.endsWith("'")) {
+            input.substring(1, input.length - 1) // Remove surrounding single quotes
+        } else {
+            input // No change if no single quotes are present
+        }
+    }
+}
+
+// Command for 'pwd' functionality
+class PwdCommand(private val directoryContext: DirectoryContext) : Command {
+    override fun execute(args: List<String>) {
+        println(directoryContext.currentDirectory.absolutePath)
+    }
+}
+
 // Command for 'cd' functionality
 class CdCommand(private val directoryContext: DirectoryContext) : Command {
-
     override fun execute(args: List<String>) {
         if (args.isEmpty()) {
             println("cd: missing argument")
@@ -44,54 +67,34 @@ class CdCommand(private val directoryContext: DirectoryContext) : Command {
     }
 }
 
-// Command for 'pwd' functionality
-class PwdCommand(private val directoryContext: DirectoryContext) : Command {
+// Command for 'cat' functionality (with single quotes)
+class CatCommand : Command {
     override fun execute(args: List<String>) {
-        println(directoryContext.currentDirectory.absolutePath)
-    }
-}
+        // Process each argument enclosed in single quotes
+        val processedArgs = args.map { removeSingleQuotes(it) }
 
-// Command for 'echo' functionality
-class EchoCommand : Command {
-    override fun execute(args: List<String>) {
-        println(args.joinToString(" "))
+        // Print the content of files (simulating 'cat' behavior)
+        processedArgs.forEach {
+            val file = File(it)
+            if (file.exists() && file.isFile) {
+                println(file.readText())  // Read file content
+            } else {
+                println("cat: $it: No such file")
+            }
+        }
     }
-}
 
-// Command for 'exit' functionality
-class ExitCommand : Command {
-    override fun execute(args: List<String>) {
-        if (args == listOf("0")) {
-            println("Exiting...")
-            System.exit(0)
+    private fun removeSingleQuotes(input: String): String {
+        return if (input.startsWith("'") && input.endsWith("'")) {
+            input.substring(1, input.length - 1) // Remove surrounding single quotes
         } else {
-            println("exit: Invalid arguments")
+            input // No change if no single quotes are present
         }
-    }
-}
-
-// Command for 'type' functionality
-class TypeCommand(private val builtins: Set<String>, private val paths: List<String>) : Command {
-    override fun execute(args: List<String>) {
-        if (args.isEmpty()) return
-
-        val target = args[0]
-        when {
-            builtins.contains(target) -> println("$target is a shell builtin")
-            findExecutable(target, paths) != null -> println("$target is ${findExecutable(target, paths)}")
-            else -> println("$target: not found")
-        }
-    }
-
-    private fun findExecutable(command: String, paths: List<String>): String? {
-        return paths.map { File(it, command) }
-            .firstOrNull { it.exists() && it.canExecute() }
-            ?.absolutePath
     }
 }
 
 // Command Registry to register and execute commands
-class CommandRegistry(private val builtins: Set<String>, private val paths: List<String>, private val directoryContext: DirectoryContext) {
+class CommandRegistry(private val directoryContext: DirectoryContext) {
 
     private val commands = mutableMapOf<String, Command>()
 
@@ -100,8 +103,7 @@ class CommandRegistry(private val builtins: Set<String>, private val paths: List
         commands["cd"] = CdCommand(directoryContext)
         commands["pwd"] = PwdCommand(directoryContext)
         commands["echo"] = EchoCommand()
-        commands["exit"] = ExitCommand()
-        commands["type"] = TypeCommand(builtins, paths)
+        commands["cat"] = CatCommand()
     }
 
     fun executeCommand(command: String, args: List<String>) {
@@ -116,15 +118,13 @@ class CommandRegistry(private val builtins: Set<String>, private val paths: List
 
 // Main Shell Program
 fun main() {
-    val builtins = setOf("echo", "exit", "type", "pwd", "cd")
-    val paths = System.getenv("PATH")?.split(":")?.toMutableList() ?: mutableListOf()
     val directoryContext = DirectoryContext() // To manage the current directory state
-    val commandRegistry = CommandRegistry(builtins, paths, directoryContext)
+    val commandRegistry = CommandRegistry(directoryContext)
 
     while (true) {
         print("$ ")
         val input = readlnOrNull() ?: break // Read input, exit on EOF
-        val tokens = input.split(" ").filter { it.isNotEmpty() } // Tokenize input
+        val tokens = parseInput(input) // Parse the input to handle quoted strings
         if (tokens.isEmpty()) continue
 
         val command = tokens[0]
@@ -132,4 +132,10 @@ fun main() {
 
         commandRegistry.executeCommand(command, args) // Execute command using the registry
     }
+}
+
+// Function to parse input and handle single quotes
+fun parseInput(input: String): List<String> {
+    val regex = "'[^']*'|[^\\s]+".toRegex() // Match quoted and non-quoted words
+    return regex.findAll(input).map { it.value.trim() }.toList()
 }
