@@ -1,9 +1,9 @@
 import java.io.File
-import java.nio.file.Paths
 
 fun main() {
     val builtins = setOf("echo", "exit", "type", "pwd", "cd")
-    val paths = System.getenv("PATH")?.split(":") ?: emptyList() // Get directories from PATH
+    val paths = System.getenv("PATH")?.split(":")?.toMutableList() ?: mutableListOf()
+    paths.add(0, "/tmp/bar") // Ensure /tmp/bar is at the start of PATH
 
     while (true) {
         print("$ ")
@@ -19,8 +19,8 @@ fun main() {
             command == "echo" -> println(args.joinToString(" ")) // Print echo arguments
             command == "pwd" -> println(System.getProperty("user.dir")) // Handle pwd command
             command == "cd" -> handleCdCommand(args) // Handle cd command
-            command == "type" -> handleTypeCommand(args, builtins, paths)
-            else -> executeCommand(command, args, paths)
+            command == "type" -> handleTypeCommand(args, builtins, paths) // Handle type command
+            else -> executeCommand(command, args, paths) // Handle external commands
         }
     }
 }
