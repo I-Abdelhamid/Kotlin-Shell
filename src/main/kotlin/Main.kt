@@ -1,9 +1,125 @@
 import java.io.File
 
+// Command Interface
+interface Command {
+    fun execute(args: List<String>)
+}
+
+// Directory Context for managing the current directory state
+class DirectoryContext {
+    var currentDirectory: File = File(System.getProperty("user.dir"))
+
+    fun changeDirectory(newDir: File) {
+        if (newDir.exists() && newDir.isDirectory) {
+            currentDirectory = newDir
+        } else {
+            throw IllegalArgumentException("cd: ${newDir.absolutePath}: No such file or directory")
+        }
+    }
+}
+
+// Command for 'cd' functionality
+class CdCommand(private val directoryContext: DirectoryContext) : Command {
+
+    override fun execute(args: List<String>) {
+        if (args.isEmpty()) {
+            println("cd: missing argument")
+            return
+        }
+
+        val targetPath = resolvePath(args[0])
+        try {
+            directoryContext.changeDirectory(targetPath)
+        } catch (e: IllegalArgumentException) {
+            println(e.message)
+        }
+    }
+
+    private fun resolvePath(path: String): File {
+        return when {
+            path == "~" -> File(System.getenv("HOME") ?: throw IllegalStateException("HOME environment variable is not set"))
+            path.startsWith("/") -> File(path) // Absolute path
+            else -> File(directoryContext.currentDirectory, path) // Relative path
+        }
+    }
+}
+
+// Command for 'pwd' functionality
+class PwdCommand(private val directoryContext: DirectoryContext) : Command {
+    override fun execute(args: List<String>) {
+        println(directoryContext.currentDirectory.absolutePath)
+    }
+}
+
+// Command for 'echo' functionality
+class EchoCommand : Command {
+    override fun execute(args: List<String>) {
+        println(args.joinToString(" "))
+    }
+}
+
+// Command for 'exit' functionality
+class ExitCommand : Command {
+    override fun execute(args: List<String>) {
+        if (args == listOf("0")) {
+            println("Exiting...")
+            System.exit(0)
+        } else {
+            println("exit: Invalid arguments")
+        }
+    }
+}
+
+// Command for 'type' functionality
+class TypeCommand(private val builtins: Set<String>, private val paths: List<String>) : Command {
+    override fun execute(args: List<String>) {
+        if (args.isEmpty()) return
+
+        val target = args[0]
+        when {
+            builtins.contains(target) -> println("$target is a shell builtin")
+            findExecutable(target, paths) != null -> println("$target is ${findExecutable(target, paths)}")
+            else -> println("$target: not found")
+        }
+    }
+
+    private fun findExecutable(command: String, paths: List<String>): String? {
+        return paths.map { File(it, command) }
+            .firstOrNull { it.exists() && it.canExecute() }
+            ?.absolutePath
+    }
+}
+
+// Command Registry to register and execute commands
+class CommandRegistry(private val builtins: Set<String>, private val paths: List<String>, private val directoryContext: DirectoryContext) {
+
+    private val commands = mutableMapOf<String, Command>()
+
+    init {
+        // Register all commands
+        commands["cd"] = CdCommand(directoryContext)
+        commands["pwd"] = PwdCommand(directoryContext)
+        commands["echo"] = EchoCommand()
+        commands["exit"] = ExitCommand()
+        commands["type"] = TypeCommand(builtins, paths)
+    }
+
+    fun executeCommand(command: String, args: List<String>) {
+        val cmd = commands[command]
+        if (cmd != null) {
+            cmd.execute(args)
+        } else {
+            println("$command: command not found")
+        }
+    }
+}
+
+// Main Shell Program
 fun main() {
     val builtins = setOf("echo", "exit", "type", "pwd", "cd")
     val paths = System.getenv("PATH")?.split(":")?.toMutableList() ?: mutableListOf()
-    paths.add(0, "/tmp/bar") // Ensure /tmp/bar is at the start of PATH
+    val directoryContext = DirectoryContext() // To manage the current directory state
+    val commandRegistry = CommandRegistry(builtins, paths, directoryContext)
 
     while (true) {
         print("$ ")
@@ -14,76 +130,6 @@ fun main() {
         val command = tokens[0]
         val args = tokens.drop(1)
 
-        when {
-            command == "exit" && args == listOf("0") -> return // Exit with status 0
-            command == "echo" -> println(args.joinToString(" ")) // Print echo arguments
-            command == "pwd" -> println(System.getProperty("user.dir")) // Handle pwd command
-            command == "cd" -> handleCdCommand(args) // Handle cd command
-            command == "type" -> handleTypeCommand(args, builtins, paths) // Handle type command
-            else -> executeCommand(command, args, paths) // Handle external commands
-        }
+        commandRegistry.executeCommand(command, args) // Execute command using the registry
     }
-}
-
-fun handleCdCommand(args: List<String>) {
-    if (args.isEmpty()) {
-        println("cd: missing argument")
-        return
-    }
-
-    // Handle ~ (home directory)
-    val path = if (args[0] == "~") {
-        System.getenv("HOME") ?: ""
-    } else {
-        args[0]
-    }
-
-    val file = if (path.startsWith("/")) {
-        // If the path is absolute, use it directly
-        File(path)
-    } else {
-        // If the path is relative, resolve it based on the current working directory
-        File(System.getProperty("user.dir"), path)
-    }
-
-    try {
-        if (file.isDirectory) {
-            // Change the current working directory of the JVM process.
-            System.setProperty("user.dir", file.canonicalPath)
-        } else {
-            println("cd: $path: No such file or directory")
-        }
-    } catch (e: Exception) {
-        println("cd: $path: No such file or directory")
-    }
-}
-
-fun handleTypeCommand(args: List<String>, builtins: Set<String>, paths: List<String>) {
-    if (args.isEmpty()) return
-    val target = args[0]
-    when {
-        builtins.contains(target) -> println("$target is a shell builtin")
-        findExecutable(target, paths) != null -> println("$target is ${findExecutable(target, paths)}")
-        else -> println("$target: not found")
-    }
-}
-
-fun executeCommand(command: String, args: List<String>, paths: List<String>) {
-    val process = try {
-        ProcessBuilder(listOf(command) + args)
-            .redirectInput(ProcessBuilder.Redirect.INHERIT)
-            .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-            .redirectError(ProcessBuilder.Redirect.INHERIT)
-            .start()
-    } catch (e: Exception) {
-        println("$command: command not found")
-        return
-    }
-    process.waitFor() // Wait for process completion
-}
-
-fun findExecutable(command: String, paths: List<String>): String? {
-    return paths.map { File(it, command) }
-        .firstOrNull { it.exists() && it.canExecute() }
-        ?.absolutePath
 }
