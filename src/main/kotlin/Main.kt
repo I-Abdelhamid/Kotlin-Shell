@@ -21,9 +21,9 @@ class DirectoryContext {
 // Command for 'echo' functionality
 class EchoCommand : Command {
     override fun execute(args: List<String>) {
-        // Join arguments and handle single quotes correctly
-        val processedArgs = args.map { removeSingleQuotes(it) }
-        println(processedArgs.joinToString(" "))
+        // Process arguments to handle single quotes
+        val processedArgs = args.joinToString(" ") { removeSingleQuotes(it) }
+        println(processedArgs)
     }
 
     private fun removeSingleQuotes(input: String): String {
