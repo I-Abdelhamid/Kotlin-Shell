@@ -1,4 +1,7 @@
 fun main() {
-     print("$ ")
-    readln() // Wait for user input
+    while (true) {
+        print("$ ")
+        val command = readlnOrNull() ?: break  // Read input, exit on EOF
+        println("$command: command not found")
+    }
 }
