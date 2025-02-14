@@ -21,17 +21,9 @@ class DirectoryContext {
 // Command for 'echo' functionality
 class EchoCommand : Command {
     override fun execute(args: List<String>) {
-        // Process arguments to handle single quotes
-        val processedArgs = args.joinToString(" ") { removeSingleQuotes(it) }
+        // Process arguments, joining them with a space between non-quoted ones, and no space for quoted parts
+        val processedArgs = args.joinToString(" ") { it.removeSurrounding("'") } // Strip surrounding quotes
         println(processedArgs)
-    }
-
-    private fun removeSingleQuotes(input: String): String {
-        return if (input.startsWith("'") && input.endsWith("'")) {
-            input.substring(1, input.length - 1) // Remove surrounding single quotes
-        } else {
-            input // No change if no single quotes are present
-        }
     }
 }
 
@@ -71,24 +63,20 @@ class CdCommand(private val directoryContext: DirectoryContext) : Command {
 class CatCommand : Command {
     override fun execute(args: List<String>) {
         // Process each argument enclosed in single quotes
-        val processedArgs = args.map { removeSingleQuotes(it) }
+        val processedArgs = args.map { it.removeSurrounding("'") }
 
         // Print the content of files (simulating 'cat' behavior)
         processedArgs.forEach {
-            val file = File(it)
-            if (file.exists() && file.isFile) {
-                println(file.readText())  // Read file content
+            if (it.isEmpty()) {
+                println("cat: No file specified")
             } else {
-                println("cat: $it: No such file")
+                val file = File(it)
+                if (file.exists() && file.isFile) {
+                    println(file.readText())  // Read file content
+                } else {
+                    println("cat: $it: No such file")
+                }
             }
-        }
-    }
-
-    private fun removeSingleQuotes(input: String): String {
-        return if (input.startsWith("'") && input.endsWith("'")) {
-            input.substring(1, input.length - 1) // Remove surrounding single quotes
-        } else {
-            input // No change if no single quotes are present
         }
     }
 }
