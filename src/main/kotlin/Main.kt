@@ -1,7 +1,8 @@
 import java.io.File
+import java.nio.file.Paths
 
 fun main() {
-    val builtins = setOf("echo", "exit", "type")
+    val builtins = setOf("echo", "exit", "type", "pwd")
     val paths = System.getenv("PATH")?.split(":") ?: emptyList() // Get directories from PATH
 
     while (true) {
@@ -16,6 +17,7 @@ fun main() {
         when {
             command == "exit" && args == listOf("0") -> return // Exit with status 0
             command == "echo" -> println(args.joinToString(" ")) // Print echo arguments
+            command == "pwd" -> println(Paths.get("").toAbsolutePath()) // Handle pwd command
             command == "type" -> handleTypeCommand(args, builtins, paths)
             else -> executeCommand(command, args, paths)
         }
@@ -45,7 +47,6 @@ fun executeCommand(command: String, args: List<String>, paths: List<String>) {
     }
     process.waitFor() // Wait for process completion
 }
-
 
 fun findExecutable(command: String, paths: List<String>): String? {
     return paths.map { File(it, command) }
