@@ -31,12 +31,22 @@ fun handleCdCommand(args: List<String>) {
         return
     }
     val dir = args[0]
-    val file = File(dir)
-
-    if (file.isDirectory) {
-        // Change the current working directory of the JVM process.
-        System.setProperty("user.dir", file.absolutePath)
+    val file = if (dir.startsWith("/")) {
+        // If the path is absolute, use it directly
+        File(dir)
     } else {
+        // If the path is relative, resolve it based on the current working directory
+        File(System.getProperty("user.dir"), dir)
+    }
+
+    try {
+        if (file.isDirectory) {
+            // Change the current working directory of the JVM process.
+            System.setProperty("user.dir", file.canonicalPath)
+        } else {
+            println("cd: $dir: No such file or directory")
+        }
+    } catch (e: Exception) {
         println("cd: $dir: No such file or directory")
     }
 }
