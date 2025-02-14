@@ -30,13 +30,20 @@ fun handleCdCommand(args: List<String>) {
         println("cd: missing argument")
         return
     }
-    val dir = args[0]
-    val file = if (dir.startsWith("/")) {
+
+    // Handle ~ (home directory)
+    val path = if (args[0] == "~") {
+        System.getenv("HOME") ?: ""
+    } else {
+        args[0]
+    }
+
+    val file = if (path.startsWith("/")) {
         // If the path is absolute, use it directly
-        File(dir)
+        File(path)
     } else {
         // If the path is relative, resolve it based on the current working directory
-        File(System.getProperty("user.dir"), dir)
+        File(System.getProperty("user.dir"), path)
     }
 
     try {
@@ -44,10 +51,10 @@ fun handleCdCommand(args: List<String>) {
             // Change the current working directory of the JVM process.
             System.setProperty("user.dir", file.canonicalPath)
         } else {
-            println("cd: $dir: No such file or directory")
+            println("cd: $path: No such file or directory")
         }
     } catch (e: Exception) {
-        println("cd: $dir: No such file or directory")
+        println("cd: $path: No such file or directory")
     }
 }
 
