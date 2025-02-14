@@ -17,7 +17,7 @@ fun main() {
         when {
             command == "exit" && args == listOf("0") -> return // Exit with status 0
             command == "echo" -> println(args.joinToString(" ")) // Print echo arguments
-            command == "pwd" -> println(Paths.get("").toAbsolutePath()) // Handle pwd command
+            command == "pwd" -> println(System.getProperty("user.dir")) // Handle pwd command
             command == "cd" -> handleCdCommand(args) // Handle cd command
             command == "type" -> handleTypeCommand(args, builtins, paths)
             else -> executeCommand(command, args, paths)
@@ -34,7 +34,8 @@ fun handleCdCommand(args: List<String>) {
     val file = File(dir)
 
     if (file.isDirectory) {
-        System.setProperty("user.dir", file.absolutePath) // Change working directory
+        // Change the current working directory of the JVM process.
+        System.setProperty("user.dir", file.absolutePath)
     } else {
         println("cd: $dir: No such file or directory")
     }
