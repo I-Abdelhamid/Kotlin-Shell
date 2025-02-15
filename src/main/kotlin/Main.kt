@@ -125,14 +125,10 @@ class Shell {
             val args = mutableListOf<String>()
             val sb = StringBuilder()
             var currentQuote: Char? = null
-            var useLiteral = false
+            var i = 0
 
-            for (c in input) {
-                if (useLiteral) {
-                    sb.append(c)
-                    useLiteral = false
-                    continue
-                }
+            while (i < input.length) {
+                val c = input[i]
 
                 when (currentQuote) {
                     SINGLE_QUOTE -> {
@@ -141,12 +137,27 @@ class Shell {
                         } else {
                             sb.append(c)
                         }
+                        i++
                     }
                     DOUBLE_QUOTE -> {
                         if (c == DOUBLE_QUOTE) {
                             currentQuote = null
+                            i++
+                        } else if (c == BACKSLASH && i + 1 < input.length) {
+                            // Handle escaped characters in double quotes
+                            val nextChar = input[i + 1]
+                            if (nextChar == BACKSLASH || nextChar == DOUBLE_QUOTE ||
+                                nextChar == '$' || nextChar == '\n') {
+                                sb.append(nextChar)
+                                i += 2  // Skip both backslash and the escaped character
+                            } else {
+                                // Backslash is treated literally if not escaping \, ", $, or newline
+                                sb.append(BACKSLASH)
+                                i++
+                            }
                         } else {
                             sb.append(c)
+                            i++
                         }
                     }
                     else -> {
@@ -156,12 +167,24 @@ class Shell {
                                     args.add(sb.toString())
                                     sb.clear()
                                 }
+                                i++
                             }
-                            c == BACKSLASH -> useLiteral = true
-                            c == SINGLE_QUOTE -> currentQuote = SINGLE_QUOTE
-                            c == DOUBLE_QUOTE -> currentQuote = DOUBLE_QUOTE
+                            c == BACKSLASH && i + 1 < input.length -> {
+                                // Outside quotes, backslash escapes any character
+                                sb.append(input[i + 1])
+                                i += 2  // Skip both backslash and the escaped character
+                            }
+                            c == SINGLE_QUOTE -> {
+                                currentQuote = SINGLE_QUOTE
+                                i++
+                            }
+                            c == DOUBLE_QUOTE -> {
+                                currentQuote = DOUBLE_QUOTE
+                                i++
+                            }
                             else -> {
                                 sb.append(c)
+                                i++
                             }
                         }
                     }
