@@ -1,162 +1,212 @@
 import java.io.File
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
 
-private var pathCommands: HashMap<String, String> = hashMapOf()
-private var currentDir = Paths.get("").toAbsolutePath()
-
+// Main application entry point
 fun main() {
-    pathCommands = getPathCommands()
-    val commandDispatcher = CommandDispatcher(pathCommands)
-
-    do {
-        val continuePrompt = prompt(commandDispatcher)
-    } while (continuePrompt)
+    val shell = Shell()
+    shell.start()
 }
 
-fun String.getPathCommandOrNull(): String? {
-    return pathCommands[this]
-}
+// Shell class that encapsulates all functionality
+class Shell {
+    private val commandExecutor = CommandExecutor()
+    private val inputParser = InputParser()
+    private var currentDirectory = Paths.get("").toAbsolutePath()
 
-private const val EXIT_COMMAND = "exit 0"
-private const val ECHO_COMMAND = "echo"
-private const val TYPE_COMMAND = "type"
-private const val PWD_COMMAND = "pwd"
-private const val CD_COMMAND = "cd"
+    fun start() {
+        do {
+            val shouldContinue = promptAndExecute()
+        } while (shouldContinue)
+    }
 
-private fun prompt(commandDispatcher: CommandDispatcher): Boolean {
-    print("$ ")
-    val command = readln()
-    if (EXIT_COMMAND == command) return false
+    private fun promptAndExecute(): Boolean {
+        print("$ ")
+        val inputLine = readln()
 
-    val args = parseCommandArguments(command)
-    val firstCommand = args.firstOrNull()
+        if (inputLine == "exit 0") return false
 
-    firstCommand?.let {
-        commandDispatcher.dispatch(it, args)
-    } ?: println("$command: command not found")
+        try {
+            // Reload path commands before parsing to capture any PATH changes
+            val pathCommands = PathCommandsLoader.load()
+            val parsedCommand = inputParser.parse(inputLine, pathCommands)
+            executeCommand(parsedCommand, pathCommands)
+        } catch (e: Exception) {
+            println("Error: ${e.message}")
+        }
 
-    return true
-}
+        return true
+    }
 
-fun parseCommandArguments(command: String): List<String> {
-    val sb = StringBuilder()
-    val args = mutableListOf<String>()
-    var current: Char? = null
-    command.toCharArray().forEach { c ->
-        when (current) {
-            '\'' -> if (c == '\'') current = null else sb.append(c)
-            '\"' -> if (c == '\"') current = null else sb.append(c)
-            else -> when {
-                c.isWhitespace() -> {
-                    if (sb.isNotBlank()) {
-                        args.add(sb.toString())
-                        sb.clear()
+    private fun executeCommand(command: Command, pathCommands: Map<String, String>) {
+        when (command) {
+            is Command.Exit -> { /* Do nothing, will exit in next loop iteration */ }
+            is Command.Cd -> changeDirectory(command.directory)
+            is Command.Pwd -> println(currentDirectory)
+            is Command.Type -> println(handleTypeCommand(command.argument, pathCommands))
+            is Command.Echo -> println(command.text)
+            is Command.ExternalCommand -> executeExternalCommand(command.args)
+            is Command.Unknown -> println("${command.input}: command not found")
+        }
+    }
+
+    private fun changeDirectory(dir: String?) {
+        dir?.let {
+            val newPath = when {
+                dir == "~" -> Paths.get(System.getenv("HOME") ?: "")
+                Paths.get(dir).isAbsolute -> Paths.get(dir)
+                else -> currentDirectory.resolve(Paths.get(dir)).normalize()
+            }
+
+            if (Files.exists(newPath)) {
+                currentDirectory = newPath
+            } else {
+                println("cd: $newPath: No such file or directory")
+            }
+        }
+    }
+
+    private fun handleTypeCommand(argument: String?, pathCommands: Map<String, String>): String {
+        if (argument == null) return "type: missing argument"
+
+        if (isBuiltInCommand(argument)) return "$argument is a shell builtin"
+
+        val pathCommand = pathCommands[argument]
+        return pathCommand?.let { "$argument is $it" } ?: "$argument: not found"
+    }
+
+    private fun isBuiltInCommand(command: String): Boolean {
+        return BuiltInCommands.entries.any { it.name.equals(command, ignoreCase = true) }
+    }
+
+    private fun executeExternalCommand(args: List<String>) {
+        commandExecutor.execute(args)
+    }
+
+    // Inner class that handles command execution
+    private class CommandExecutor {
+        fun execute(command: List<String>) {
+            try {
+                ProcessBuilder(command)
+                    .redirectOutput(ProcessBuilder.Redirect.INHERIT)
+                    .redirectError(ProcessBuilder.Redirect.INHERIT)
+                    .start()
+                    .waitFor()
+            } catch (e: Exception) {
+                println("Error running command: ${command.firstOrNull()}")
+            }
+        }
+    }
+
+    // Inner class for parsing input
+    private inner class InputParser {
+        private val SINGLE_QUOTE = '\''
+        private val DOUBLE_QUOTE = '"'
+        private val BACKSLASH = '\\'
+
+        fun parse(input: String, pathCommands: Map<String, String>): Command {
+            val args = parseArguments(input)
+            if (args.isEmpty()) return Command.Unknown(input)
+
+            val firstArg = args.first()
+            return when {
+                firstArg == "exit" && args.size > 1 && args[1] == "0" -> Command.Exit
+                firstArg == "cd" -> Command.Cd(args.getOrNull(1))
+                firstArg == "pwd" -> Command.Pwd
+                firstArg == "type" -> Command.Type(args.getOrNull(1))
+                firstArg == "echo" -> Command.Echo(args.drop(1).joinToString(" "))
+                pathCommands.containsKey(firstArg) -> Command.ExternalCommand(args)
+                else -> Command.Unknown(input)
+            }
+        }
+
+        private fun parseArguments(input: String): List<String> {
+            val args = mutableListOf<String>()
+            val sb = StringBuilder()
+            var currentQuote: Char? = null
+            var useLiteral = false
+
+            for (c in input) {
+                if (useLiteral) {
+                    sb.append(c)
+                    useLiteral = false
+                    continue
+                }
+
+                when (currentQuote) {
+                    SINGLE_QUOTE -> {
+                        if (c == SINGLE_QUOTE) {
+                            currentQuote = null
+                        } else {
+                            sb.append(c)
+                        }
+                    }
+                    DOUBLE_QUOTE -> {
+                        if (c == DOUBLE_QUOTE) {
+                            currentQuote = null
+                        } else {
+                            sb.append(c)
+                        }
+                    }
+                    else -> {
+                        when {
+                            c.isWhitespace() -> {
+                                if (sb.isNotBlank()) {
+                                    args.add(sb.toString())
+                                    sb.clear()
+                                }
+                            }
+                            c == BACKSLASH -> useLiteral = true
+                            c == SINGLE_QUOTE -> currentQuote = SINGLE_QUOTE
+                            c == DOUBLE_QUOTE -> currentQuote = DOUBLE_QUOTE
+                            else -> {
+                                sb.append(c)
+                            }
+                        }
                     }
                 }
-                c == '\'' -> current = '\''
-                c == '\"' -> current = '\"'
-                else -> sb.append(c)
             }
+
+            if (sb.isNotBlank()) args.add(sb.toString())
+            return args
         }
-    }
-    if (sb.isNotBlank()) args.add(sb.toString())
-    return args
-}
-
-class CommandDispatcher(private val pathCommands: HashMap<String, String>) {
-
-    private val builtInCommands = mapOf(
-        ECHO_COMMAND to ::handleEchoCommand,
-        TYPE_COMMAND to ::handleTypeCommand,
-        PWD_COMMAND to ::handlePwdCommand,
-        CD_COMMAND to ::handleCdCommand
-    )
-
-    fun dispatch(command: String, args: List<String>) {
-        builtInCommands[command]?.invoke(args) ?: run {
-            pathCommands[command]?.let { runExternalCommand(command, args) }
-                ?: println("$command: command not found")
-        }
-    }
-
-    private fun handleEchoCommand(args: List<String>) {
-        println(args.drop(1).joinToString(" ").trim())
-    }
-
-    private fun handleTypeCommand(args: List<String>) {
-        if (args.size >= 2) {
-            val command = args[1]
-            if (command.isBuiltInCommand()) {
-                println("$command is a shell builtin")
-            } else {
-                pathCommands[command]?.let {
-                    println("$command is $it")
-                } ?: println("$command: not found")
-            }
-        }
-    }
-
-    private fun handlePwdCommand(args: List<String>) {
-        println(currentDir)
-    }
-
-    private fun handleCdCommand(args: List<String>) {
-        val dir = args.getOrNull(1)
-        dir?.let { changeDirectory(it) }
-    }
-
-    private fun runExternalCommand(command: String, args: List<String>) {
-        try {
-            ProcessBuilder(args)
-                .redirectOutput(ProcessBuilder.Redirect.INHERIT)
-                .redirectError(ProcessBuilder.Redirect.INHERIT)
-                .start()
-                .waitFor()
-        } catch (e: Exception) {
-            println("Error running command: $command")
-        }
-    }
-
-    private fun changeDirectory(dir: String) {
-        val newPath = when (dir) {
-            "~" -> Paths.get(System.getenv("HOME"))
-            else -> {
-                val resolvedPath = if (Paths.get(dir).isAbsolute) Paths.get(dir)
-                else currentDir.resolve(dir).normalize()
-                resolvedPath
-            }
-        }
-        if (Files.exists(newPath)) {
-            currentDir = newPath
-        } else {
-            println("cd: $newPath: No such file or directory")
-        }
-    }
-
-    private fun String.isBuiltInCommand(): Boolean {
-        return BuiltInCommands.entries.any { it.name == this.uppercase() }
     }
 }
 
+// Sealed class hierarchy for commands
+sealed class Command {
+    object Exit : Command()
+    data class Cd(val directory: String?) : Command()
+    object Pwd : Command()
+    data class Type(val argument: String?) : Command()
+    data class Echo(val text: String) : Command()
+    data class ExternalCommand(val args: List<String>) : Command()
+    data class Unknown(val input: String) : Command()
+}
+
+// Enum for built-in commands
 enum class BuiltInCommands {
-    EXIT,
-    ECHO,
-    TYPE,
-    PWD,
-    CD
+    EXIT, ECHO, TYPE, PWD, CD
 }
 
-private fun getPathCommands(): HashMap<String, String> {
-    val path = System.getenv()["PATH"]
-    val commands = hashMapOf<String, String>()
-    path?.split(":")
-        ?.map { File(it) }
-        ?.filter { it.exists() && it.isDirectory }
-        ?.forEach { dir ->
-            dir.listFiles()
-                ?.filter { it.isFile && it.canExecute() }
-                ?.forEach { file -> commands.putIfAbsent(file.name, file.absolutePath) }
-        }
-    return commands
+// Object responsible for loading path commands
+object PathCommandsLoader {
+    fun load(): Map<String, String> {
+        val path = System.getenv()["PATH"] ?: return emptyMap()
+        val commands = mutableMapOf<String, String>()
+
+        path.split(":")
+            .map { File(it) }
+            .filter { it.exists() && it.isDirectory }
+            .forEach { dir ->
+                dir.listFiles()
+                    ?.filter { it.isFile && it.canExecute() }
+                    ?.forEach { file ->
+                        commands.putIfAbsent(file.name, file.absolutePath)
+                    }
+            }
+
+        return commands
+    }
 }
