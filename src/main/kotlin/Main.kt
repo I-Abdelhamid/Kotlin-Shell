@@ -21,9 +21,21 @@ class DirectoryContext {
 // Command for 'echo' functionality
 class EchoCommand : Command {
     override fun execute(args: List<String>) {
-        // Process arguments, joining them with a space between non-quoted ones, and no space for quoted parts
-        val processedArgs = args.joinToString(" ") { it.removeSurrounding("'") } // Strip surrounding quotes
-        println(processedArgs)
+        val result = buildString {
+            var prevWasQuoted = false
+
+            for (arg in args) {
+                val isQuoted = arg.startsWith("'") && arg.endsWith("'")
+                val cleanArg = arg.removeSurrounding("'")
+
+                // Add a space if the previous element was quoted OR it's a new separate argument
+                if (isNotEmpty() && (!prevWasQuoted || !isQuoted)) append(" ")
+
+                append(cleanArg)
+                prevWasQuoted = isQuoted
+            }
+        }
+        println(result)
     }
 }
 
@@ -59,13 +71,10 @@ class CdCommand(private val directoryContext: DirectoryContext) : Command {
     }
 }
 
-// Command for 'cat' functionality (with single quotes)
+// Command for 'cat' functionality
 class CatCommand : Command {
     override fun execute(args: List<String>) {
-        // Process each argument enclosed in single quotes
         val processedArgs = args.map { it.removeSurrounding("'") }
-
-        // Print the content of files (simulating 'cat' behavior)
         processedArgs.forEach {
             if (it.isEmpty()) {
                 println("cat: No file specified")
@@ -83,11 +92,9 @@ class CatCommand : Command {
 
 // Command Registry to register and execute commands
 class CommandRegistry(private val directoryContext: DirectoryContext) {
-
     private val commands = mutableMapOf<String, Command>()
 
     init {
-        // Register all commands
         commands["cd"] = CdCommand(directoryContext)
         commands["pwd"] = PwdCommand(directoryContext)
         commands["echo"] = EchoCommand()
@@ -106,24 +113,24 @@ class CommandRegistry(private val directoryContext: DirectoryContext) {
 
 // Main Shell Program
 fun main() {
-    val directoryContext = DirectoryContext() // To manage the current directory state
+    val directoryContext = DirectoryContext()
     val commandRegistry = CommandRegistry(directoryContext)
 
     while (true) {
         print("$ ")
-        val input = readlnOrNull() ?: break // Read input, exit on EOF
-        val tokens = parseInput(input) // Parse the input to handle quoted strings
+        val input = readlnOrNull() ?: break
+        val tokens = parseInput(input)
         if (tokens.isEmpty()) continue
 
         val command = tokens[0]
         val args = tokens.drop(1)
 
-        commandRegistry.executeCommand(command, args) // Execute command using the registry
+        commandRegistry.executeCommand(command, args)
     }
 }
 
-// Function to parse input and handle single quotes
+// Function to parse input and handle single quotes properly
 fun parseInput(input: String): List<String> {
-    val regex = "'[^']*'|[^\\s]+".toRegex() // Match quoted and non-quoted words
-    return regex.findAll(input).map { it.value.trim() }.toList()
+    val regex = """'[^']*'|\S+""".toRegex() // Matches quoted strings and non-whitespace words
+    return regex.findAll(input).map { it.value }.toList()
 }
