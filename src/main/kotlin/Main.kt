@@ -41,7 +41,9 @@ class Shell {
 
     private fun executeCommand(command: Command, pathCommands: Map<String, String>) {
         when (command) {
-            is Command.Exit -> { /* Do nothing, will exit in next loop iteration */ }
+            is Command.Exit -> { /* Do nothing, will exit in next loop iteration */
+            }
+
             is Command.Cd -> changeDirectory(command.directory)
             is Command.Pwd -> println(currentDirectory)
             is Command.Type -> println(handleTypeCommand(command.argument, pathCommands))
@@ -139,6 +141,7 @@ class Shell {
                         }
                         i++
                     }
+
                     DOUBLE_QUOTE -> {
                         if (c == DOUBLE_QUOTE) {
                             currentQuote = null
@@ -147,7 +150,8 @@ class Shell {
                             // Handle escaped characters in double quotes
                             val nextChar = input[i + 1]
                             if (nextChar == BACKSLASH || nextChar == DOUBLE_QUOTE ||
-                                nextChar == '$' || nextChar == '\n') {
+                                nextChar == '$' || nextChar == '\n'
+                            ) {
                                 sb.append(nextChar)
                                 i += 2  // Skip both backslash and the escaped character
                             } else {
@@ -160,6 +164,7 @@ class Shell {
                             i++
                         }
                     }
+
                     else -> {
                         when {
                             c.isWhitespace() -> {
@@ -169,19 +174,23 @@ class Shell {
                                 }
                                 i++
                             }
+
                             c == BACKSLASH && i + 1 < input.length -> {
                                 // Outside quotes, backslash escapes any character
                                 sb.append(input[i + 1])
                                 i += 2  // Skip both backslash and the escaped character
                             }
+
                             c == SINGLE_QUOTE -> {
                                 currentQuote = SINGLE_QUOTE
                                 i++
                             }
+
                             c == DOUBLE_QUOTE -> {
                                 currentQuote = DOUBLE_QUOTE
                                 i++
                             }
+
                             else -> {
                                 sb.append(c)
                                 i++
