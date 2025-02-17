@@ -4,6 +4,13 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.io.OutputStream
+import org.jline.reader.LineReader
+import org.jline.reader.LineReaderBuilder
+import org.jline.reader.Candidate
+import org.jline.reader.Completer
+import org.jline.reader.ParsedLine
+import org.jline.terminal.Terminal
+import org.jline.terminal.TerminalBuilder
 
 fun main() {
     val shell = Shell()
@@ -14,6 +21,16 @@ class Shell {
     private val commandExecutor = CommandExecutor()
     private val inputParser = InputParser()
     private var currentDirectory = Paths.get("").toAbsolutePath()
+    private val terminal: Terminal = TerminalBuilder.builder().system(true).build()
+    private val lineReader: LineReader
+
+    init {
+        val completer = BuiltinCompleter()
+        lineReader = LineReaderBuilder.builder()
+            .terminal(terminal)
+            .completer(completer)
+            .build()
+    }
 
     fun start() {
         do {
@@ -22,8 +39,11 @@ class Shell {
     }
 
     private fun promptAndExecute(): Boolean {
-        print("$ ")
-        val inputLine = readln()
+        val inputLine = try {
+            lineReader.readLine("$ ")
+        } catch (e: Exception) {
+            return false
+        }
 
         if (inputLine == "exit 0") return false
 
@@ -36,6 +56,21 @@ class Shell {
         }
 
         return true
+    }
+
+    // Completer class for builtin commands
+    private class BuiltinCompleter : Completer {
+        private val builtins = listOf("echo", "exit")
+
+        override fun complete(reader: LineReader, line: ParsedLine, candidates: MutableList<Candidate>) {
+            val word = line.word().toLowerCase()
+
+            builtins.forEach { builtin ->
+                if (builtin.startsWith(word)) {
+                    candidates.add(Candidate(builtin + " "))
+                }
+            }
+        }
     }
 
     private fun executeCommand(command: Command, pathCommands: Map<String, String>, redirects: Redirections) {
@@ -129,7 +164,6 @@ class Shell {
 
         if (isBuiltInCommand(argument)) return "$argument is a shell builtin"
 
-        // Reload PATH commands each time to get the latest state
         val pathCommands = PathCommandsLoader.load()
         return pathCommands[argument]?.let { "$argument is $it" }
             ?: "$argument: not found"
@@ -379,35 +413,4 @@ enum class BuiltInCommands {
 
 object PathCommandsLoader {
     fun load(): Map<String, String> {
-        // Get the PATH environment variable
         val pathValue = System.getenv("PATH") ?: return emptyMap()
-        val commands = mutableMapOf<String, String>()
-
-        // Split PATH and process each directory
-        pathValue.split(File.pathSeparator)
-            .map { pathDir ->
-                // Convert to absolute path and normalize
-                Paths.get(pathDir).toAbsolutePath().normalize().toString()
-            }
-            .forEach { pathDir -> // Removed distinct() to allow duplicate PATH entries
-                val directory = File(pathDir)
-                if (directory.exists() && directory.isDirectory) {
-                    try {
-                        directory.listFiles()?.forEach { file ->
-                            // For each executable file, store the first occurrence in PATH
-                            if (file.isFile && file.canExecute()) {
-                                // Only store the first occurrence of a command
-                                if (!commands.containsKey(file.name)) {
-                                    commands[file.name] = file.absolutePath
-                                }
-                            }
-                        }
-                    } catch (e: SecurityException) {
-                        // Silently ignore directories we can't access
-                    }
-                }
-            }
-
-        return commands
-    }
-}
