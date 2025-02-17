@@ -1,16 +1,8 @@
 import java.io.File
 import java.io.FileOutputStream
-import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.Paths
 import java.io.OutputStream
-import org.jline.reader.LineReader
-import org.jline.reader.LineReaderBuilder
-import org.jline.reader.Candidate
-import org.jline.reader.Completer
-import org.jline.reader.ParsedLine
-import org.jline.terminal.Terminal
-import org.jline.terminal.TerminalBuilder
+import java.nio.file.Files
+import java.nio.file.Paths
 
 fun main() {
     val shell = Shell()
@@ -21,16 +13,7 @@ class Shell {
     private val commandExecutor = CommandExecutor()
     private val inputParser = InputParser()
     private var currentDirectory = Paths.get("").toAbsolutePath()
-    private val terminal: Terminal = TerminalBuilder.builder().system(true).build()
-    private val lineReader: LineReader
-
-    init {
-        val completer = BuiltinCompleter()
-        lineReader = LineReaderBuilder.builder()
-            .terminal(terminal)
-            .completer(completer)
-            .build()
-    }
+    private val reader = ConsoleReader()
 
     fun start() {
         do {
@@ -39,11 +22,8 @@ class Shell {
     }
 
     private fun promptAndExecute(): Boolean {
-        val inputLine = try {
-            lineReader.readLine("$ ")
-        } catch (e: Exception) {
-            return false
-        }
+        print("$ ")
+        val inputLine = reader.readLine()
 
         if (inputLine == "exit 0") return false
 
@@ -58,17 +38,56 @@ class Shell {
         return true
     }
 
-    // Completer class for builtin commands
-    private class BuiltinCompleter : Completer {
-        private val builtins = listOf("echo", "exit")
+    private class ConsoleReader {
+        private val builtins = listOf("echo", "exit", "cd", "pwd", "type")
+        private val buffer = StringBuilder()
 
-        override fun complete(reader: LineReader, line: ParsedLine, candidates: MutableList<Candidate>) {
-            val word = line.word().toLowerCase()
+        fun readLine(): String {
+            while (true) {
+                val input = System.`in`.read()
+                when (input) {
+                    -1 -> return buffer.toString() // EOF
+                    9 -> { // TAB
+                        handleTabCompletion()
+                    }
 
-            builtins.forEach { builtin ->
-                if (builtin.startsWith(word)) {
-                    candidates.add(Candidate(builtin + " "))
+                    10, 13 -> { // Enter
+                        println()
+                        val result = buffer.toString()
+                        buffer.clear()
+                        return result
+                    }
+
+                    127 -> { // Backspace
+                        if (buffer.isNotEmpty()) {
+                            buffer.deleteAt(buffer.length - 1)
+                            print("\b \b") // Erase last character
+                        }
+                    }
+
+                    else -> {
+                        val char = input.toChar()
+                        buffer.append(char)
+                        print(char)
+                    }
                 }
+            }
+        }
+
+        private fun handleTabCompletion() {
+            val currentInput = buffer.toString()
+            val completion = builtins.firstOrNull { it.startsWith(currentInput) }
+
+            if (completion != null) {
+                // Clear current input
+                repeat(currentInput.length) {
+                    print("\b \b")
+                }
+                buffer.clear()
+
+                // Print completion
+                print(completion + " ")
+                buffer.append(completion + " ")
             }
         }
     }
@@ -98,7 +117,9 @@ class Shell {
 
         try {
             when (command) {
-                is Command.Exit -> { /* Do nothing, will exit in next loop iteration */ }
+                is Command.Exit -> { /* Do nothing, will exit in next loop iteration */
+                }
+
                 is Command.Cd -> changeDirectory(command.directory)
                 is Command.Pwd -> {
                     val output = currentDirectory.toString()
@@ -109,6 +130,7 @@ class Shell {
                         println(output)
                     }
                 }
+
                 is Command.Type -> {
                     val output = handleTypeCommand(command.argument)
                     if (stdoutStream != null) {
@@ -118,6 +140,7 @@ class Shell {
                         println(output)
                     }
                 }
+
                 is Command.Echo -> {
                     val output = command.text
                     if (stdoutStream != null) {
@@ -127,6 +150,7 @@ class Shell {
                         println(output)
                     }
                 }
+
                 is Command.ExternalCommand -> executeExternalCommand(command.args, stdoutStream, stderrStream)
                 is Command.Unknown -> {
                     val errorMsg = "${command.input}: command not found\n"
@@ -250,7 +274,7 @@ class Shell {
             while (i < input.length) {
                 val c = input[i]
 
-                if ((c == SINGLE_QUOTE || c == DOUBLE_QUOTE) && (i == 0 || input[i-1] != BACKSLASH)) {
+                if ((c == SINGLE_QUOTE || c == DOUBLE_QUOTE) && (i == 0 || input[i - 1] != BACKSLASH)) {
                     if (!inQuotes) {
                         inQuotes = true
                         quoteChar = c
@@ -335,6 +359,7 @@ class Shell {
                         }
                         i++
                     }
+
                     DOUBLE_QUOTE -> {
                         if (c == DOUBLE_QUOTE) {
                             currentQuote = null
@@ -342,7 +367,8 @@ class Shell {
                         } else if (c == BACKSLASH && i + 1 < input.length) {
                             val nextChar = input[i + 1]
                             if (nextChar == BACKSLASH || nextChar == DOUBLE_QUOTE ||
-                                nextChar == '$' || nextChar == '\n') {
+                                nextChar == '$' || nextChar == '\n'
+                            ) {
                                 sb.append(nextChar)
                                 i += 2
                             } else {
@@ -354,6 +380,7 @@ class Shell {
                             i++
                         }
                     }
+
                     else -> {
                         when {
                             c.isWhitespace() -> {
@@ -363,18 +390,22 @@ class Shell {
                                 }
                                 i++
                             }
+
                             c == BACKSLASH && i + 1 < input.length -> {
                                 sb.append(input[i + 1])
                                 i += 2
                             }
+
                             c == SINGLE_QUOTE -> {
                                 currentQuote = SINGLE_QUOTE
                                 i++
                             }
+
                             c == DOUBLE_QUOTE -> {
                                 currentQuote = DOUBLE_QUOTE
                                 i++
                             }
+
                             else -> {
                                 sb.append(c)
                                 i++
@@ -413,4 +444,35 @@ enum class BuiltInCommands {
 
 object PathCommandsLoader {
     fun load(): Map<String, String> {
+        // Get the PATH environment variable
         val pathValue = System.getenv("PATH") ?: return emptyMap()
+        val commands = mutableMapOf<String, String>()
+
+        // Split PATH and process each directory
+        pathValue.split(File.pathSeparator)
+            .map { pathDir ->
+                // Convert to absolute path and normalize
+                Paths.get(pathDir).toAbsolutePath().normalize().toString()
+            }
+            .forEach { pathDir -> // Removed distinct() to allow duplicate PATH entries
+                val directory = File(pathDir)
+                if (directory.exists() && directory.isDirectory) {
+                    try {
+                        directory.listFiles()?.forEach { file ->
+                            // For each executable file, store the first occurrence in PATH
+                            if (file.isFile && file.canExecute()) {
+                                // Only store the first occurrence of a command
+                                if (!commands.containsKey(file.name)) {
+                                    commands[file.name] = file.absolutePath
+                                }
+                            }
+                        }
+                    } catch (e: SecurityException) {
+                        // Silently ignore directories we can't access
+                    }
+                }
+            }
+
+        return commands
+    }
+}
