@@ -5,13 +5,11 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.io.OutputStream
 
-// Main application entry point
 fun main() {
     val shell = Shell()
     shell.start()
 }
 
-// Shell class that encapsulates all functionality
 class Shell {
     private val commandExecutor = CommandExecutor()
     private val inputParser = InputParser()
@@ -45,11 +43,7 @@ class Shell {
             try {
                 val file = File(redirects.stdout)
                 file.parentFile?.mkdirs()
-                if (redirects.stdoutAppend) {
-                    FileOutputStream(file, true)  // Open in append mode
-                } else {
-                    FileOutputStream(file)  // Open in overwrite mode
-                }
+                FileOutputStream(file, redirects.stdoutAppend)
             } catch (e: Exception) {
                 println("Error creating output file: ${e.message}")
                 null
@@ -60,11 +54,7 @@ class Shell {
             try {
                 val file = File(redirects.stderr)
                 file.parentFile?.mkdirs()
-                if (redirects.stderrAppend) {
-                    FileOutputStream(file, true)  // Open in append mode
-                } else {
-                    FileOutputStream(file)  // Open in overwrite mode
-                }
+                FileOutputStream(file, redirects.stderrAppend)
             } catch (e: Exception) {
                 println("Error creating error file: ${e.message}")
                 null
@@ -104,12 +94,11 @@ class Shell {
                 }
                 is Command.ExternalCommand -> executeExternalCommand(command.args, stdoutStream, stderrStream)
                 is Command.Unknown -> {
-                    val output = "${command.input}: command not found"
-                    if (stdoutStream != null) {
-                        stdoutStream.write(output.toByteArray())
-                        stdoutStream.write("\n".toByteArray())
+                    val errorMsg = "${command.input}: command not found\n"
+                    if (stderrStream != null) {
+                        stderrStream.write(errorMsg.toByteArray())
                     } else {
-                        println(output)
+                        System.err.println(errorMsg.trim())
                     }
                 }
             }
@@ -130,7 +119,7 @@ class Shell {
             if (Files.exists(newPath)) {
                 currentDirectory = newPath
             } else {
-                println("cd: $newPath: No such file or directory")
+                System.err.println("cd: $newPath: No such file or directory")
             }
         }
     }
@@ -157,7 +146,6 @@ class Shell {
         fun execute(command: List<String>, stdoutStream: OutputStream?, stderrStream: OutputStream?) {
             try {
                 val processBuilder = ProcessBuilder(command)
-
                 processBuilder.redirectOutput(
                     if (stdoutStream != null) ProcessBuilder.Redirect.PIPE
                     else ProcessBuilder.Redirect.INHERIT
@@ -178,9 +166,13 @@ class Shell {
                 }
 
                 process.waitFor()
-
             } catch (e: Exception) {
-                println("Error running command: ${command.firstOrNull()}")
+                val errorMsg = "Error running command: ${command.firstOrNull()}\n"
+                if (stderrStream != null) {
+                    stderrStream.write(errorMsg.toByteArray())
+                } else {
+                    System.err.println(errorMsg.trim())
+                }
             }
         }
     }
@@ -223,7 +215,6 @@ class Shell {
             while (i < input.length) {
                 val c = input[i]
 
-                // Handle quotes
                 if ((c == SINGLE_QUOTE || c == DOUBLE_QUOTE) && (i == 0 || input[i-1] != BACKSLASH)) {
                     if (!inQuotes) {
                         inQuotes = true
@@ -234,7 +225,6 @@ class Shell {
                     }
                 }
 
-                // Look for redirection operators outside of quotes
                 if (!inQuotes) {
                     when {
                         // Handle stdout append (>> or 1>>)
@@ -250,6 +240,16 @@ class Shell {
                             }
                             break
                         }
+                        // Handle stderr append (2>>)
+                        c == '2' && i + 1 < input.length && input[i + 1] == '>' &&
+                                i + 2 < input.length && input[i + 2] == '>' -> {
+                            commandPart = input.substring(0, i).trim()
+                            if (i + 3 < input.length) {
+                                stderrFile = parseRedirectionTarget(input.substring(i + 3).trim())
+                                stderrAppend = true
+                            }
+                            break
+                        }
                         // Handle stdout overwrite (> or 1>)
                         c == '>' || (c == '1' && i + 1 < input.length && input[i + 1] == '>') -> {
                             val redirectStart = if (c == '1') i else i
@@ -261,28 +261,21 @@ class Shell {
                             }
                             break
                         }
-                        // Handle stderr redirection (2>)
+                        // Handle stderr overwrite (2>)
                         c == '2' && i + 1 < input.length && input[i + 1] == '>' -> {
                             commandPart = input.substring(0, i).trim()
                             if (i + 2 < input.length) {
-                                val isAppend = i + 2 < input.length && input[i + 2] == '>'
-                                stderrFile = parseRedirectionTarget(
-                                    input.substring(if (isAppend) i + 3 else i + 2).trim()
-                                )
-                                stderrAppend = isAppend
+                                stderrFile = parseRedirectionTarget(input.substring(i + 2).trim())
+                                stderrAppend = false
                             }
                             break
                         }
                     }
                 }
-
                 i++
             }
 
-            return Pair(
-                commandPart,
-                Redirections(stdoutFile, stderrFile, stdoutAppend, stderrAppend)
-            )
+            return Pair(commandPart, Redirections(stdoutFile, stderrFile, stdoutAppend, stderrAppend))
         }
 
         private fun parseRedirectionTarget(input: String): String {
