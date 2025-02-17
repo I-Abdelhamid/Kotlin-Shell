@@ -129,9 +129,10 @@ class Shell {
 
         if (isBuiltInCommand(argument)) return "$argument is a shell builtin"
 
+        // Reload PATH commands each time to get the latest state
         val pathCommands = PathCommandsLoader.load()
-        val pathCommand = pathCommands[argument]
-        return pathCommand?.let { "$argument is $it" } ?: "$argument: not found"
+        return pathCommands[argument]?.let { "$argument is $it" }
+            ?: "$argument: not found"
     }
 
     private fun isBuiltInCommand(command: String): Boolean {
@@ -378,21 +379,27 @@ enum class BuiltInCommands {
 
 object PathCommandsLoader {
     fun load(): Map<String, String> {
+        // Get the PATH environment variable
         val pathValue = System.getenv("PATH") ?: return emptyMap()
         val commands = mutableMapOf<String, String>()
 
+        // Split PATH and process each directory
         pathValue.split(File.pathSeparator)
             .map { pathDir ->
+                // Convert to absolute path and normalize
                 Paths.get(pathDir).toAbsolutePath().normalize().toString()
             }
-            .distinct()
-            .forEach { pathDir ->
+            .forEach { pathDir -> // Removed distinct() to allow duplicate PATH entries
                 val directory = File(pathDir)
                 if (directory.exists() && directory.isDirectory) {
                     try {
                         directory.listFiles()?.forEach { file ->
+                            // For each executable file, store the first occurrence in PATH
                             if (file.isFile && file.canExecute()) {
-                                commands.putIfAbsent(file.name, file.absolutePath)
+                                // Only store the first occurrence of a command
+                                if (!commands.containsKey(file.name)) {
+                                    commands[file.name] = file.absolutePath
+                                }
                             }
                         }
                     } catch (e: SecurityException) {
