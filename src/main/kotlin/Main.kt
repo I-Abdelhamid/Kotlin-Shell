@@ -45,7 +45,11 @@ class Shell {
             try {
                 val file = File(redirects.stdout)
                 file.parentFile?.mkdirs()
-                FileOutputStream(file)
+                if (redirects.stdoutAppend) {
+                    FileOutputStream(file, true)  // Open in append mode
+                } else {
+                    FileOutputStream(file)  // Open in overwrite mode
+                }
             } catch (e: Exception) {
                 println("Error creating output file: ${e.message}")
                 null
@@ -56,7 +60,11 @@ class Shell {
             try {
                 val file = File(redirects.stderr)
                 file.parentFile?.mkdirs()
-                FileOutputStream(file)
+                if (redirects.stderrAppend) {
+                    FileOutputStream(file, true)  // Open in append mode
+                } else {
+                    FileOutputStream(file)  // Open in overwrite mode
+                }
             } catch (e: Exception) {
                 println("Error creating error file: ${e.message}")
                 null
@@ -206,6 +214,8 @@ class Shell {
             var commandPart = input
             var stdoutFile: String? = null
             var stderrFile: String? = null
+            var stdoutAppend = false
+            var stderrAppend = false
             var inQuotes = false
             var quoteChar: Char? = null
             var i = 0
@@ -227,13 +237,27 @@ class Shell {
                 // Look for redirection operators outside of quotes
                 if (!inQuotes) {
                     when {
-                        // Handle stdout redirection (> or 1>)
+                        // Handle stdout append (>> or 1>>)
+                        (c == '>' && i + 1 < input.length && input[i + 1] == '>') ||
+                                (c == '1' && i + 1 < input.length && input[i + 1] == '>' &&
+                                        i + 2 < input.length && input[i + 2] == '>') -> {
+                            val redirectStart = if (c == '1') i else i
+                            commandPart = input.substring(0, redirectStart).trim()
+                            val fileStart = if (c == '1') i + 3 else i + 2
+                            if (fileStart < input.length) {
+                                stdoutFile = parseRedirectionTarget(input.substring(fileStart).trim())
+                                stdoutAppend = true
+                            }
+                            break
+                        }
+                        // Handle stdout overwrite (> or 1>)
                         c == '>' || (c == '1' && i + 1 < input.length && input[i + 1] == '>') -> {
                             val redirectStart = if (c == '1') i else i
                             commandPart = input.substring(0, redirectStart).trim()
                             val fileStart = if (c == '1') i + 2 else i + 1
                             if (fileStart < input.length) {
                                 stdoutFile = parseRedirectionTarget(input.substring(fileStart).trim())
+                                stdoutAppend = false
                             }
                             break
                         }
@@ -241,7 +265,11 @@ class Shell {
                         c == '2' && i + 1 < input.length && input[i + 1] == '>' -> {
                             commandPart = input.substring(0, i).trim()
                             if (i + 2 < input.length) {
-                                stderrFile = parseRedirectionTarget(input.substring(i + 2).trim())
+                                val isAppend = i + 2 < input.length && input[i + 2] == '>'
+                                stderrFile = parseRedirectionTarget(
+                                    input.substring(if (isAppend) i + 3 else i + 2).trim()
+                                )
+                                stderrAppend = isAppend
                             }
                             break
                         }
@@ -251,7 +279,10 @@ class Shell {
                 i++
             }
 
-            return Pair(commandPart, Redirections(stdoutFile, stderrFile))
+            return Pair(
+                commandPart,
+                Redirections(stdoutFile, stderrFile, stdoutAppend, stderrAppend)
+            )
         }
 
         private fun parseRedirectionTarget(input: String): String {
@@ -333,7 +364,9 @@ class Shell {
 
 data class Redirections(
     val stdout: String? = null,
-    val stderr: String? = null
+    val stderr: String? = null,
+    val stdoutAppend: Boolean = false,
+    val stderrAppend: Boolean = false
 )
 
 sealed class Command {
@@ -352,24 +385,20 @@ enum class BuiltInCommands {
 
 object PathCommandsLoader {
     fun load(): Map<String, String> {
-        // Explicitly get PATH environment variable using ProcessEnvironment
         val pathValue = System.getenv("PATH") ?: return emptyMap()
         val commands = mutableMapOf<String, String>()
 
-        // Process each directory in PATH
         pathValue.split(File.pathSeparator)
             .map { pathDir ->
-                // Convert to absolute path and handle potential symlinks
                 Paths.get(pathDir).toAbsolutePath().normalize().toString()
             }
-            .distinct() // Remove duplicate paths
+            .distinct()
             .forEach { pathDir ->
                 val directory = File(pathDir)
                 if (directory.exists() && directory.isDirectory) {
                     try {
                         directory.listFiles()?.forEach { file ->
                             if (file.isFile && file.canExecute()) {
-                                // Store the absolute path of the executable
                                 commands.putIfAbsent(file.name, file.absolutePath)
                             }
                         }
