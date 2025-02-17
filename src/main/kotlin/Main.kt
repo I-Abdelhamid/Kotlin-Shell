@@ -13,7 +13,7 @@ class Shell {
     private val commandExecutor = CommandExecutor()
     private val inputParser = InputParser()
     private var currentDirectory = Paths.get("").toAbsolutePath()
-    private val reader = ConsoleReader()
+    private val builtins = listOf("echo", "exit")
 
     fun start() {
         do {
@@ -23,9 +23,17 @@ class Shell {
 
     private fun promptAndExecute(): Boolean {
         print("$ ")
-        val inputLine = reader.readLine()
+        var inputLine = readLine() ?: return false
 
-        if (inputLine == "exit 0") return false
+        // Auto-complete command if it's a partial match
+        val firstWord = inputLine.trim().split("\\s+".toRegex()).firstOrNull() ?: ""
+        val completion = builtins.firstOrNull { it.startsWith(firstWord) }
+        if (completion != null && firstWord != completion) {
+            print("\r$ $completion ")
+            inputLine = completion + inputLine.substring(firstWord.length)
+        }
+
+        if (inputLine.trim() == "exit 0") return false
 
         try {
             val pathCommands = PathCommandsLoader.load()
@@ -75,21 +83,25 @@ class Shell {
         }
 
         private fun handleTabCompletion() {
-            val currentInput = buffer.toString()
+            val currentInput = buffer.toString().trim() // Trim to remove accidental spaces
             val completion = builtins.firstOrNull { it.startsWith(currentInput) }
 
-            if (completion != null) {
-                // Clear current input
-                repeat(currentInput.length) {
-                    print("\b \b")
-                }
-                buffer.clear()
+            if (completion != null && currentInput != completion) {
+                // Move cursor back and clear previous input
+                repeat(currentInput.length) { print("\b \b") }
 
-                // Print completion
-                print(completion + " ")
-                buffer.append(completion + " ")
+                // Print the completed command followed by a space
+                val completedText = "$completion "
+                print(completedText)
+
+                // Update buffer with the new autocompleted text
+                buffer.clear()
+                buffer.append(completedText)
             }
         }
+
+
+
     }
 
     private fun executeCommand(command: Command, pathCommands: Map<String, String>, redirects: Redirections) {
