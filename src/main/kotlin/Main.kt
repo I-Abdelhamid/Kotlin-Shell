@@ -1,8 +1,9 @@
 import java.io.File
 import java.io.FileOutputStream
-import java.io.OutputStream
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
+import java.io.OutputStream
 
 fun main() {
     val shell = Shell()
@@ -13,7 +14,6 @@ class Shell {
     private val commandExecutor = CommandExecutor()
     private val inputParser = InputParser()
     private var currentDirectory = Paths.get("").toAbsolutePath()
-    private val builtins = listOf("echo", "exit")
 
     fun start() {
         do {
@@ -23,17 +23,9 @@ class Shell {
 
     private fun promptAndExecute(): Boolean {
         print("$ ")
-        var inputLine = readLine() ?: return false
+        val inputLine = readln()
 
-        // Auto-complete command if it's a partial match
-        val firstWord = inputLine.trim().split("\\s+".toRegex()).firstOrNull() ?: ""
-        val completion = builtins.firstOrNull { it.startsWith(firstWord) }
-        if (completion != null && firstWord != completion) {
-            print("\r$ $completion ")
-            inputLine = completion + inputLine.substring(firstWord.length)
-        }
-
-        if (inputLine.trim() == "exit 0") return false
+        if (inputLine == "exit 0") return false
 
         try {
             val pathCommands = PathCommandsLoader.load()
@@ -44,64 +36,6 @@ class Shell {
         }
 
         return true
-    }
-
-    private class ConsoleReader {
-        private val builtins = listOf("echo", "exit", "cd", "pwd", "type")
-        private val buffer = StringBuilder()
-
-        fun readLine(): String {
-            while (true) {
-                val input = System.`in`.read()
-                when (input) {
-                    -1 -> return buffer.toString() // EOF
-                    9 -> { // TAB
-                        handleTabCompletion()
-                    }
-
-                    10, 13 -> { // Enter
-                        println()
-                        val result = buffer.toString()
-                        buffer.clear()
-                        return result
-                    }
-
-                    127 -> { // Backspace
-                        if (buffer.isNotEmpty()) {
-                            buffer.deleteAt(buffer.length - 1)
-                            print("\b \b") // Erase last character
-                        }
-                    }
-
-                    else -> {
-                        val char = input.toChar()
-                        buffer.append(char)
-                        print(char)
-                    }
-                }
-            }
-        }
-
-        private fun handleTabCompletion() {
-            val currentInput = buffer.toString().trim() // Trim to remove accidental spaces
-            val completion = builtins.firstOrNull { it.startsWith(currentInput) }
-
-            if (completion != null && currentInput != completion) {
-                // Move cursor back and clear previous input
-                repeat(currentInput.length) { print("\b \b") }
-
-                // Print the completed command followed by a space
-                val completedText = "$completion "
-                print(completedText)
-
-                // Update buffer with the new autocompleted text
-                buffer.clear()
-                buffer.append(completedText)
-            }
-        }
-
-
-
     }
 
     private fun executeCommand(command: Command, pathCommands: Map<String, String>, redirects: Redirections) {
@@ -129,9 +63,7 @@ class Shell {
 
         try {
             when (command) {
-                is Command.Exit -> { /* Do nothing, will exit in next loop iteration */
-                }
-
+                is Command.Exit -> { /* Do nothing, will exit in next loop iteration */ }
                 is Command.Cd -> changeDirectory(command.directory)
                 is Command.Pwd -> {
                     val output = currentDirectory.toString()
@@ -142,7 +74,6 @@ class Shell {
                         println(output)
                     }
                 }
-
                 is Command.Type -> {
                     val output = handleTypeCommand(command.argument)
                     if (stdoutStream != null) {
@@ -152,7 +83,6 @@ class Shell {
                         println(output)
                     }
                 }
-
                 is Command.Echo -> {
                     val output = command.text
                     if (stdoutStream != null) {
@@ -162,7 +92,6 @@ class Shell {
                         println(output)
                     }
                 }
-
                 is Command.ExternalCommand -> executeExternalCommand(command.args, stdoutStream, stderrStream)
                 is Command.Unknown -> {
                     val errorMsg = "${command.input}: command not found\n"
@@ -200,6 +129,7 @@ class Shell {
 
         if (isBuiltInCommand(argument)) return "$argument is a shell builtin"
 
+        // Reload PATH commands each time to get the latest state
         val pathCommands = PathCommandsLoader.load()
         return pathCommands[argument]?.let { "$argument is $it" }
             ?: "$argument: not found"
@@ -286,7 +216,7 @@ class Shell {
             while (i < input.length) {
                 val c = input[i]
 
-                if ((c == SINGLE_QUOTE || c == DOUBLE_QUOTE) && (i == 0 || input[i - 1] != BACKSLASH)) {
+                if ((c == SINGLE_QUOTE || c == DOUBLE_QUOTE) && (i == 0 || input[i-1] != BACKSLASH)) {
                     if (!inQuotes) {
                         inQuotes = true
                         quoteChar = c
@@ -371,7 +301,6 @@ class Shell {
                         }
                         i++
                     }
-
                     DOUBLE_QUOTE -> {
                         if (c == DOUBLE_QUOTE) {
                             currentQuote = null
@@ -379,8 +308,7 @@ class Shell {
                         } else if (c == BACKSLASH && i + 1 < input.length) {
                             val nextChar = input[i + 1]
                             if (nextChar == BACKSLASH || nextChar == DOUBLE_QUOTE ||
-                                nextChar == '$' || nextChar == '\n'
-                            ) {
+                                nextChar == '$' || nextChar == '\n') {
                                 sb.append(nextChar)
                                 i += 2
                             } else {
@@ -392,7 +320,6 @@ class Shell {
                             i++
                         }
                     }
-
                     else -> {
                         when {
                             c.isWhitespace() -> {
@@ -402,22 +329,18 @@ class Shell {
                                 }
                                 i++
                             }
-
                             c == BACKSLASH && i + 1 < input.length -> {
                                 sb.append(input[i + 1])
                                 i += 2
                             }
-
                             c == SINGLE_QUOTE -> {
                                 currentQuote = SINGLE_QUOTE
                                 i++
                             }
-
                             c == DOUBLE_QUOTE -> {
                                 currentQuote = DOUBLE_QUOTE
                                 i++
                             }
-
                             else -> {
                                 sb.append(c)
                                 i++
