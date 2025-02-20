@@ -47,7 +47,7 @@ class Shell {
         return true
     }
 
-    private class ConsoleReader {
+    private inner class ConsoleReader {
         private val builtins = listOf("echo", "exit", "type", "cd", "pwd", "kill")
         private val buffer = StringBuilder()
         private var cursorPosition = 0
@@ -301,7 +301,6 @@ class InputParser {
         var stdoutAppend = false
         var stderrAppend = false
 
-        // Split input into parts based on redirection operators
         val parts = input.split("\\s*(2>>|2>|>>|>)\\s*".toRegex()).map { it.trim() }.filter { it.isNotEmpty() }
         if (parts.size > 1) {
             commandPart = parts[0]
@@ -325,7 +324,6 @@ class InputParser {
                 }
             }
         }
-
         return Pair(commandPart.trim(), Redirections(stdout, stderr, stdoutAppend, stderrAppend))
     }
 
