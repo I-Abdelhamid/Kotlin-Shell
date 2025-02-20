@@ -1,105 +1,151 @@
 import java.io.File
 import java.io.FileOutputStream
-import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.Paths
 import java.io.OutputStream
+import java.nio.file.Files
+import java.nio.file.Paths
 
 fun main() {
-    val shell = Shell()
-    shell.start()
+    ProcessBuilder("/bin/sh", "-c", "stty raw -echo").inheritIO().start().waitFor()
+    try {
+        val shell = Shell()
+        shell.start()
+    } finally {
+        ProcessBuilder("/bin/sh", "-c", "stty sane").inheritIO().start().waitFor()
+    }
 }
 
 class Shell {
     private val commandExecutor = CommandExecutor()
     private val inputParser = InputParser()
     private var currentDirectory = Paths.get("").toAbsolutePath()
+    private val reader = ConsoleReader()
+    private val env = System.getenv().toMutableMap()
 
     fun start() {
-        do {
-            val shouldContinue = promptAndExecute()
-        } while (shouldContinue)
+        var shouldContinue = true
+        while (shouldContinue) {
+            shouldContinue = promptAndExecute()
+        }
     }
 
     private fun promptAndExecute(): Boolean {
         print("$ ")
-        val inputLine = readln()
-
-        if (inputLine == "exit 0") return false
+        System.out.flush()
+        val inputLine = reader.readLine()
+        if (inputLine.isBlank()) return true
+        if (inputLine == "exit" || inputLine == "exit 0") return false
 
         try {
-            val pathCommands = PathCommandsLoader.load()
+            val pathCommands = PathCommandsLoader.load(env["PATH"] ?: "")
             val (parsedCommand, redirects) = inputParser.parse(inputLine, pathCommands)
+            print("\r")
+            System.out.flush()
             executeCommand(parsedCommand, pathCommands, redirects)
         } catch (e: Exception) {
             println("Error: ${e.message}")
         }
-
         return true
     }
 
-    private fun executeCommand(command: Command, pathCommands: Map<String, String>, redirects: Redirections) {
-        val stdoutStream = if (redirects.stdout != null) {
-            try {
-                val file = File(redirects.stdout)
-                file.parentFile?.mkdirs()
-                FileOutputStream(file, redirects.stdoutAppend)
-            } catch (e: Exception) {
-                println("Error creating output file: ${e.message}")
-                null
-            }
-        } else null
+    private class ConsoleReader {
+        private val builtins = listOf("echo", "exit", "type", "cd", "pwd", "kill")
+        private val buffer = StringBuilder()
+        private var cursorPosition = 0
 
-        val stderrStream = if (redirects.stderr != null) {
-            try {
-                val file = File(redirects.stderr)
+        fun readLine(): String {
+            buffer.clear()
+            cursorPosition = 0
+            while (true) {
+                val input = System.`in`.read()
+                when (input) {
+                    -1 -> return buffer.toString()
+                    9 -> handleTabCompletion()
+                    13 -> {
+                        val result = buffer.toString().trimEnd()
+                        print("\n")
+                        System.out.flush()
+                        buffer.clear()
+                        cursorPosition = 0
+                        return result
+                    }
+                    127 -> {
+                        if (buffer.isNotEmpty() && cursorPosition > 0) {
+                            buffer.deleteCharAt(cursorPosition - 1)
+                            cursorPosition--
+                            print("\b \b")
+                            System.out.flush()
+                        }
+                    }
+                    else -> {
+                        val char = input.toChar()
+                        if (char.isISOControl()) continue
+                        buffer.insert(cursorPosition, char)
+                        cursorPosition++
+                        print(char)
+                        System.out.flush()
+                    }
+                }
+            }
+        }
+
+        private fun handleTabCompletion() {
+            val currentInput = buffer.toString().trimEnd()
+            val completions = builtins.filter { it.startsWith(currentInput) }
+            if (completions.size == 1) {
+                val completion = completions[0]
+                repeat(buffer.length) { print("\b \b") }
+                buffer.clear()
+                buffer.append(completion)
+                cursorPosition = completion.length
+                print(completion)
+                if (!completion.endsWith(" ")) {
+                    buffer.append(" ")
+                    cursorPosition++
+                    print(" ")
+                }
+                System.out.flush()
+            }
+        }
+    }
+
+    private fun executeCommand(command: Command, pathCommands: Map<String, String>, redirects: Redirections) {
+        fun createFileWithDirs(path: String, append: Boolean): FileOutputStream? {
+            return try {
+                val file = File(path)
                 file.parentFile?.mkdirs()
-                FileOutputStream(file, redirects.stderrAppend)
+                FileOutputStream(file, append)
             } catch (e: Exception) {
-                println("Error creating error file: ${e.message}")
+                System.err.println("Failed to create file: $path")
                 null
             }
-        } else null
+        }
+
+        val stdoutStream = redirects.stdout?.let { createFileWithDirs(it, redirects.stdoutAppend) }
+        val stderrStream = redirects.stderr?.let { createFileWithDirs(it, redirects.stderrAppend) }
 
         try {
             when (command) {
-                is Command.Exit -> { /* Do nothing, will exit in next loop iteration */ }
+                is Command.Exit -> {}
                 is Command.Cd -> changeDirectory(command.directory)
                 is Command.Pwd -> {
-                    val output = currentDirectory.toString()
-                    if (stdoutStream != null) {
-                        stdoutStream.write(output.toByteArray())
-                        stdoutStream.write("\n".toByteArray())
-                    } else {
-                        println(output)
-                    }
+                    val output = "$currentDirectory\n"
+                    stdoutStream?.write(output.toByteArray()) ?: print(output)
                 }
                 is Command.Type -> {
-                    val output = handleTypeCommand(command.argument)
-                    if (stdoutStream != null) {
-                        stdoutStream.write(output.toByteArray())
-                        stdoutStream.write("\n".toByteArray())
-                    } else {
-                        println(output)
-                    }
+                    val output = handleTypeCommand(command.argument, pathCommands) + "\n"
+                    stdoutStream?.write(output.toByteArray()) ?: print(output)
                 }
                 is Command.Echo -> {
-                    val output = command.text
-                    if (stdoutStream != null) {
-                        stdoutStream.write(output.toByteArray())
-                        stdoutStream.write("\n".toByteArray())
-                    } else {
-                        println(output)
-                    }
+                    val output = "${command.text}\n"
+                    stdoutStream?.write(output.toByteArray()) ?: print(output)
                 }
-                is Command.ExternalCommand -> executeExternalCommand(command.args, stdoutStream, stderrStream)
+                is Command.Kill -> handleKillCommand(command.pid, stderrStream)
+                is Command.ExternalCommand -> {
+                    commandExecutor.execute(command.args, currentDirectory.toFile(), env, stdoutStream, stderrStream)
+                }
                 is Command.Unknown -> {
                     val errorMsg = "${command.input}: command not found\n"
-                    if (stderrStream != null) {
-                        stderrStream.write(errorMsg.toByteArray())
-                    } else {
-                        System.err.println(errorMsg.trim())
-                    }
+                    stderrStream?.write(errorMsg.toByteArray()) ?: System.err.print(errorMsg)
                 }
             }
         } finally {
@@ -109,249 +155,47 @@ class Shell {
     }
 
     private fun changeDirectory(dir: String?) {
-        dir?.let {
-            val newPath = when {
-                dir == "~" -> Paths.get(System.getenv("HOME") ?: "")
-                Paths.get(dir).isAbsolute -> Paths.get(dir)
-                else -> currentDirectory.resolve(Paths.get(dir)).normalize()
-            }
-
-            if (Files.exists(newPath)) {
-                currentDirectory = newPath
-            } else {
-                System.err.println("cd: $newPath: No such file or directory")
-            }
+        if (dir == null) {
+            currentDirectory = Paths.get(env["HOME"] ?: "/")
+            return
+        }
+        val newPath = when {
+            dir == "~" -> Paths.get(env["HOME"] ?: "/")
+            Paths.get(dir).isAbsolute -> Paths.get(dir)
+            else -> currentDirectory.resolve(dir).normalize()
+        }
+        if (Files.exists(newPath) && Files.isDirectory(newPath)) {
+            currentDirectory = newPath
+        } else {
+            System.err.println("cd: $dir: No such file or directory")
         }
     }
 
-    private fun handleTypeCommand(argument: String?): String {
+    private fun handleTypeCommand(argument: String?, pathCommands: Map<String, String>): String {
         if (argument == null) return "type: missing argument"
-
-        if (isBuiltInCommand(argument)) return "$argument is a shell builtin"
-
-        // Reload PATH commands each time to get the latest state
-        val pathCommands = PathCommandsLoader.load()
-        return pathCommands[argument]?.let { "$argument is $it" }
-            ?: "$argument: not found"
+        if (BuiltInCommands.entries.any { it.name.equals(argument, ignoreCase = true) }) {
+            return "$argument is a shell builtin"
+        }
+        return pathCommands[argument]?.let { "$argument is $it" } ?: "$argument: not found"
     }
 
-    private fun isBuiltInCommand(command: String): Boolean {
-        return BuiltInCommands.entries.any { it.name.equals(command, ignoreCase = true) }
-    }
-
-    private fun executeExternalCommand(args: List<String>, stdoutStream: OutputStream?, stderrStream: OutputStream?) {
-        commandExecutor.execute(args, stdoutStream, stderrStream)
-    }
-
-    private class CommandExecutor {
-        fun execute(command: List<String>, stdoutStream: OutputStream?, stderrStream: OutputStream?) {
-            try {
-                val processBuilder = ProcessBuilder(command)
-                processBuilder.redirectOutput(
-                    if (stdoutStream != null) ProcessBuilder.Redirect.PIPE
-                    else ProcessBuilder.Redirect.INHERIT
-                )
-                processBuilder.redirectError(
-                    if (stderrStream != null) ProcessBuilder.Redirect.PIPE
-                    else ProcessBuilder.Redirect.INHERIT
-                )
-
-                val process = processBuilder.start()
-
-                if (stdoutStream != null) {
-                    process.inputStream.copyTo(stdoutStream)
-                }
-
-                if (stderrStream != null) {
-                    process.errorStream.copyTo(stderrStream)
-                }
-
-                process.waitFor()
-            } catch (e: Exception) {
-                val errorMsg = "Error running command: ${command.firstOrNull()}\n"
-                if (stderrStream != null) {
-                    stderrStream.write(errorMsg.toByteArray())
-                } else {
-                    System.err.println(errorMsg.trim())
-                }
-            }
+    private fun handleKillCommand(pid: String?, stderrStream: OutputStream?) {
+        if (pid == null) {
+            val errorMsg = "kill: missing argument\n"
+            stderrStream?.write(errorMsg.toByteArray()) ?: System.err.print(errorMsg)
+            return
         }
-    }
-
-    private inner class InputParser {
-        private val SINGLE_QUOTE = '\''
-        private val DOUBLE_QUOTE = '"'
-        private val BACKSLASH = '\\'
-
-        fun parse(input: String, pathCommands: Map<String, String>): Pair<Command, Redirections> {
-            val (commandPart, redirections) = parseRedirection(input)
-
-            val args = parseArguments(commandPart)
-            if (args.isEmpty()) return Pair(Command.Unknown(commandPart), redirections)
-
-            val firstArg = args.first()
-            val command = when {
-                firstArg == "exit" && args.size > 1 && args[1] == "0" -> Command.Exit
-                firstArg == "cd" -> Command.Cd(args.getOrNull(1))
-                firstArg == "pwd" -> Command.Pwd
-                firstArg == "type" -> Command.Type(args.getOrNull(1))
-                firstArg == "echo" -> Command.Echo(args.drop(1).joinToString(" "))
-                pathCommands.containsKey(firstArg) -> Command.ExternalCommand(args)
-                else -> Command.Unknown(commandPart)
+        try {
+            val pidNum = pid.toInt()
+            val process = ProcessBuilder("kill", "-9", pid).start()
+            process.waitFor()
+            if (process.exitValue() != 0) {
+                val errorMsg = "kill: $pid: No such process\n"
+                stderrStream?.write(errorMsg.toByteArray()) ?: System.err.print(errorMsg)
             }
-
-            return Pair(command, redirections)
-        }
-
-        private fun parseRedirection(input: String): Pair<String, Redirections> {
-            var commandPart = input
-            var stdoutFile: String? = null
-            var stderrFile: String? = null
-            var stdoutAppend = false
-            var stderrAppend = false
-            var inQuotes = false
-            var quoteChar: Char? = null
-            var i = 0
-
-            while (i < input.length) {
-                val c = input[i]
-
-                if ((c == SINGLE_QUOTE || c == DOUBLE_QUOTE) && (i == 0 || input[i-1] != BACKSLASH)) {
-                    if (!inQuotes) {
-                        inQuotes = true
-                        quoteChar = c
-                    } else if (quoteChar == c) {
-                        inQuotes = false
-                        quoteChar = null
-                    }
-                }
-
-                if (!inQuotes) {
-                    when {
-                        // Handle stdout append (>> or 1>>)
-                        (c == '>' && i + 1 < input.length && input[i + 1] == '>') ||
-                                (c == '1' && i + 1 < input.length && input[i + 1] == '>' &&
-                                        i + 2 < input.length && input[i + 2] == '>') -> {
-                            val redirectStart = if (c == '1') i else i
-                            commandPart = input.substring(0, redirectStart).trim()
-                            val fileStart = if (c == '1') i + 3 else i + 2
-                            if (fileStart < input.length) {
-                                stdoutFile = parseRedirectionTarget(input.substring(fileStart).trim())
-                                stdoutAppend = true
-                            }
-                            break
-                        }
-                        // Handle stderr append (2>>)
-                        c == '2' && i + 1 < input.length && input[i + 1] == '>' &&
-                                i + 2 < input.length && input[i + 2] == '>' -> {
-                            commandPart = input.substring(0, i).trim()
-                            if (i + 3 < input.length) {
-                                stderrFile = parseRedirectionTarget(input.substring(i + 3).trim())
-                                stderrAppend = true
-                            }
-                            break
-                        }
-                        // Handle stdout overwrite (> or 1>)
-                        c == '>' || (c == '1' && i + 1 < input.length && input[i + 1] == '>') -> {
-                            val redirectStart = if (c == '1') i else i
-                            commandPart = input.substring(0, redirectStart).trim()
-                            val fileStart = if (c == '1') i + 2 else i + 1
-                            if (fileStart < input.length) {
-                                stdoutFile = parseRedirectionTarget(input.substring(fileStart).trim())
-                                stdoutAppend = false
-                            }
-                            break
-                        }
-                        // Handle stderr overwrite (2>)
-                        c == '2' && i + 1 < input.length && input[i + 1] == '>' -> {
-                            commandPart = input.substring(0, i).trim()
-                            if (i + 2 < input.length) {
-                                stderrFile = parseRedirectionTarget(input.substring(i + 2).trim())
-                                stderrAppend = false
-                            }
-                            break
-                        }
-                    }
-                }
-                i++
-            }
-
-            return Pair(commandPart, Redirections(stdoutFile, stderrFile, stdoutAppend, stderrAppend))
-        }
-
-        private fun parseRedirectionTarget(input: String): String {
-            return parseArguments(input).firstOrNull() ?: ""
-        }
-
-        private fun parseArguments(input: String): List<String> {
-            val args = mutableListOf<String>()
-            val sb = StringBuilder()
-            var currentQuote: Char? = null
-            var i = 0
-
-            while (i < input.length) {
-                val c = input[i]
-
-                when (currentQuote) {
-                    SINGLE_QUOTE -> {
-                        if (c == SINGLE_QUOTE) {
-                            currentQuote = null
-                        } else {
-                            sb.append(c)
-                        }
-                        i++
-                    }
-                    DOUBLE_QUOTE -> {
-                        if (c == DOUBLE_QUOTE) {
-                            currentQuote = null
-                            i++
-                        } else if (c == BACKSLASH && i + 1 < input.length) {
-                            val nextChar = input[i + 1]
-                            if (nextChar == BACKSLASH || nextChar == DOUBLE_QUOTE ||
-                                nextChar == '$' || nextChar == '\n') {
-                                sb.append(nextChar)
-                                i += 2
-                            } else {
-                                sb.append(BACKSLASH)
-                                i++
-                            }
-                        } else {
-                            sb.append(c)
-                            i++
-                        }
-                    }
-                    else -> {
-                        when {
-                            c.isWhitespace() -> {
-                                if (sb.isNotBlank()) {
-                                    args.add(sb.toString())
-                                    sb.clear()
-                                }
-                                i++
-                            }
-                            c == BACKSLASH && i + 1 < input.length -> {
-                                sb.append(input[i + 1])
-                                i += 2
-                            }
-                            c == SINGLE_QUOTE -> {
-                                currentQuote = SINGLE_QUOTE
-                                i++
-                            }
-                            c == DOUBLE_QUOTE -> {
-                                currentQuote = DOUBLE_QUOTE
-                                i++
-                            }
-                            else -> {
-                                sb.append(c)
-                                i++
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (sb.isNotBlank()) args.add(sb.toString())
-            return args
+        } catch (e: NumberFormatException) {
+            val errorMsg = "kill: $pid: Invalid PID\n"
+            stderrStream?.write(errorMsg.toByteArray()) ?: System.err.print(errorMsg)
         }
     }
 }
@@ -369,45 +213,174 @@ sealed class Command {
     object Pwd : Command()
     data class Type(val argument: String?) : Command()
     data class Echo(val text: String) : Command()
+    data class Kill(val pid: String?) : Command()
     data class ExternalCommand(val args: List<String>) : Command()
     data class Unknown(val input: String) : Command()
 }
 
 enum class BuiltInCommands {
-    EXIT, ECHO, TYPE, PWD, CD
+    EXIT, ECHO, TYPE, PWD, CD, KILL
 }
 
 object PathCommandsLoader {
-    fun load(): Map<String, String> {
-        // Get the PATH environment variable
-        val pathValue = System.getenv("PATH") ?: return emptyMap()
+    fun load(path: String): Map<String, String> {
         val commands = mutableMapOf<String, String>()
-
-        // Split PATH and process each directory
-        pathValue.split(File.pathSeparator)
-            .map { pathDir ->
-                // Convert to absolute path and normalize
-                Paths.get(pathDir).toAbsolutePath().normalize().toString()
-            }
-            .forEach { pathDir -> // Removed distinct() to allow duplicate PATH entries
+        path.split(File.pathSeparator)
+            .map { Paths.get(it).toAbsolutePath().normalize().toString() }
+            .forEach { pathDir ->
                 val directory = File(pathDir)
                 if (directory.exists() && directory.isDirectory) {
-                    try {
-                        directory.listFiles()?.forEach { file ->
-                            // For each executable file, store the first occurrence in PATH
-                            if (file.isFile && file.canExecute()) {
-                                // Only store the first occurrence of a command
-                                if (!commands.containsKey(file.name)) {
-                                    commands[file.name] = file.absolutePath
-                                }
-                            }
+                    directory.listFiles()?.filter { it.isFile && it.canExecute() }
+                        ?.forEach { file -> commands.putIfAbsent(file.name, file.absolutePath) }
+                }
+            }
+        return commands
+    }
+}
+
+class CommandExecutor {
+    fun execute(
+        command: List<String>,
+        directory: File,
+        env: Map<String, String>,
+        stdoutStream: OutputStream?,
+        stderrStream: OutputStream?
+    ) {
+        val processBuilder = ProcessBuilder(command)
+        processBuilder.directory(directory)
+        processBuilder.environment().putAll(env)
+        processBuilder.redirectOutput(if (stdoutStream != null) ProcessBuilder.Redirect.PIPE else ProcessBuilder.Redirect.INHERIT)
+        processBuilder.redirectError(if (stderrStream != null) ProcessBuilder.Redirect.PIPE else ProcessBuilder.Redirect.INHERIT)
+
+        val process = processBuilder.start()
+
+        val stdoutThread = stdoutStream?.let {
+            Thread {
+                process.inputStream.use { it.copyTo(stdoutStream) }
+            }.apply { start() }
+        }
+
+        val stderrThread = stderrStream?.let {
+            Thread {
+                process.errorStream.use { it.copyTo(stderrStream) }
+            }.apply { start() }
+        }
+
+        process.waitFor()
+        stdoutThread?.join()
+        stderrThread?.join()
+    }
+}
+
+class InputParser {
+    private val SINGLE_QUOTE = '\''
+    private val DOUBLE_QUOTE = '"'
+    private val BACKSLASH = '\\'
+
+    fun parse(input: String, pathCommands: Map<String, String>): Pair<Command, Redirections> {
+        val (commandPart, redirections) = parseRedirections(input)
+        val args = parseArguments(commandPart)
+        if (args.isEmpty()) return Pair(Command.Unknown(commandPart), redirections)
+
+        val command = when (args[0]) {
+            "exit" -> Command.Exit
+            "cd" -> Command.Cd(args.getOrNull(1))
+            "pwd" -> Command.Pwd
+            "type" -> Command.Type(args.getOrNull(1))
+            "echo" -> Command.Echo(args.drop(1).joinToString(" "))
+            "kill" -> Command.Kill(args.getOrNull(1))
+            else -> if (pathCommands.containsKey(args[0])) Command.ExternalCommand(args) else Command.Unknown(commandPart)
+        }
+        return Pair(command, redirections)
+    }
+
+    private fun parseRedirections(input: String): Pair<String, Redirections> {
+        var commandPart = input
+        var stdout: String? = null
+        var stderr: String? = null
+        var stdoutAppend = false
+        var stderrAppend = false
+
+        // Split input into parts based on redirection operators
+        val parts = input.split("\\s*(2>>|2>|>>|>)\\s*".toRegex()).map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.size > 1) {
+            commandPart = parts[0]
+            for (i in 1 until parts.size step 2) {
+                val operator = input.substring(
+                    input.indexOf(parts[i - 1]) + parts[i - 1].length,
+                    input.indexOf(parts[i])
+                ).trim()
+                val target = parts[i]
+                when (operator) {
+                    "2>>" -> {
+                        stderr = target
+                        stderrAppend = true
+                    }
+                    "2>" -> stderr = target
+                    ">>" -> {
+                        stdout = target
+                        stdoutAppend = true
+                    }
+                    ">" -> stdout = target
+                }
+            }
+        }
+
+        return Pair(commandPart.trim(), Redirections(stdout, stderr, stdoutAppend, stderrAppend))
+    }
+
+    private fun parseArguments(input: String): List<String> {
+        val args = mutableListOf<String>()
+        val sb = StringBuilder()
+        var inQuotes = false
+        var quoteChar: Char? = null
+        var i = 0
+
+        while (i < input.length) {
+            val c = input[i]
+            if (inQuotes) {
+                when {
+                    c == quoteChar -> {
+                        inQuotes = false
+                        quoteChar = null
+                        i++
+                    }
+                    c == BACKSLASH && quoteChar == DOUBLE_QUOTE && i + 1 < input.length -> {
+                        val next = input[i + 1]
+                        if (next in setOf(DOUBLE_QUOTE, BACKSLASH)) sb.append(next)
+                        i += 2
+                    }
+                    else -> {
+                        sb.append(c)
+                        i++
+                    }
+                }
+            } else {
+                when {
+                    c.isWhitespace() -> {
+                        if (sb.isNotEmpty()) {
+                            args.add(sb.toString())
+                            sb.clear()
                         }
-                    } catch (e: SecurityException) {
-                        // Silently ignore directories we can't access
+                        i++
+                    }
+                    c == SINGLE_QUOTE || c == DOUBLE_QUOTE -> {
+                        inQuotes = true
+                        quoteChar = c
+                        i++
+                    }
+                    c == BACKSLASH && i + 1 < input.length -> {
+                        sb.append(input[i + 1])
+                        i += 2
+                    }
+                    else -> {
+                        sb.append(c)
+                        i++
                     }
                 }
             }
-
-        return commands
+        }
+        if (sb.isNotEmpty()) args.add(sb.toString())
+        return args
     }
 }
