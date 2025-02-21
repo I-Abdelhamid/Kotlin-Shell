@@ -5,7 +5,6 @@ import java.nio.file.Files
 import java.nio.file.Paths
 
 fun main() {
-    // Enable raw mode (disable echo)
     ProcessBuilder("/bin/sh", "-c", "stty raw -echo").inheritIO().start().waitFor()
     try {
         val shell = Shell()
@@ -60,8 +59,8 @@ class Shell {
                 val input = System.`in`.read()
                 when (input) {
                     -1 -> return buffer.toString()
-                    9 -> handleTabCompletion()
-                    10, 13 -> {
+                    9 -> handleTabCompletion()  // Tab key
+                    10, 13 -> {  // Enter key
                         val result = buffer.toString().trimEnd()
                         print("\r\n\u001B[K")
                         System.out.flush()
@@ -69,7 +68,8 @@ class Shell {
                         cursorPosition = 0
                         return result
                     }
-                    127 -> {
+
+                    127 -> {  // Backspace
                         if (buffer.isNotEmpty() && cursorPosition > 0) {
                             buffer.deleteCharAt(cursorPosition - 1)
                             cursorPosition--
@@ -77,6 +77,7 @@ class Shell {
                             System.out.flush()
                         }
                     }
+
                     else -> {
                         val char = input.toChar()
                         if (char.isISOControl() && char != '\t') continue
@@ -93,72 +94,63 @@ class Shell {
             val currentInput = buffer.toString()
             val trimmedInput = currentInput.trimEnd()
 
-            // Split input into words based on whitespace
             val words = trimmedInput.split("\\s+".toRegex())
             val cursorAtEnd = cursorPosition == currentInput.length
 
-            if (!cursorAtEnd) {
-                // If cursor isn't at end, don't perform completion
-                return
-            }
+            if (!cursorAtEnd) return
+            if (words.isEmpty()) return
 
-            if (words.isEmpty()) {
-                return
-            }
+            val currentWord = if (currentInput.endsWith(" ")) "" else words.last()
+            if (words.size > 1) words.dropLast(1).joinToString(" ") + " " else ""
 
-            // If we're completing the first word (command)
-            if (words.size == 1 || (words.size > 1 && currentInput.endsWith(" "))) {
-                val currentWord = if (currentInput.endsWith(" ")) "" else words.last()
-                val previousArgs = if (words.size > 1) words.dropLast(1).joinToString(" ") + " " else ""
+            // Always reload PATH commands to catch any changes
+            val pathCommands = PathCommandsLoader.load(env["PATH"] ?: "")
+            val allCommands = (builtins + pathCommands.keys).distinct()
+            val completions = allCommands.filter { it.startsWith(currentWord) }.sorted()
 
-                // Combine builtins and external commands from PATH
-                val pathCommands = PathCommandsLoader.load(env["PATH"] ?: "")
-                val allCommands = builtins + pathCommands.keys
-                val completions = allCommands.filter { it.startsWith(currentWord) }
+            when {
+                completions.isEmpty() && currentWord.isNotEmpty() && !currentInput.endsWith(" ") -> {
+                    print("\u0007") // Bell character
+                    System.out.flush()
+                }
 
-                when {
-                    completions.size == 1 -> {
-                        val completion = completions[0]
-                        // Clear the current line
-                        repeat(buffer.length) { print("\b \b") }
-                        buffer.clear()
-                        // Add previous arguments (if any) and completed command
-                        buffer.append(previousArgs + completion)
-                        cursorPosition = buffer.length
+                completions.size == 1 -> {
+                    val completion = completions[0]
+                    // Clear the current word on screen
+                    repeat(currentWord.length) {
+                        print("\b \b")
+                    }
+                    // Update buffer with the full completion
+                    buffer.delete(buffer.length - currentWord.length, buffer.length) // Remove currentWord
+                    buffer.append(completion) // Append full completion
+                    // Print the full completion
+                    print(completion)
+                    // Add space after command if not already present
+                    if (!currentInput.endsWith(" ")) {
+                        buffer.append(" ")
+                        print(" ")
+                    }
+                    cursorPosition = buffer.length
+                    System.out.flush()
+                }
+
+                completions.size > 1 -> {
+                    if (lastTabPressTime != null && System.currentTimeMillis() - lastTabPressTime!! < 1000) {
+                        print("\r\n${completions.joinToString("  ")}\r\n")
+                        printPrompt()
                         print(buffer.toString())
-                        // Add space after command if it wasn't there
-                        if (!currentInput.endsWith(" ")) {
-                            buffer.append(" ")
-                            cursorPosition++
-                            print(" ")
-                        }
-                        System.out.flush()
+                    } else {
+                        print("\u0007") // Bell character for first tab press
                     }
-                    completions.size > 1 -> {
-                        // For multiple matches, we could list them, but for this task
-                        // we'll just take the first match to keep it simple
-                        val completion = completions[0]
-                        repeat(buffer.length) { print("\b \b") }
-                        buffer.clear()
-                        buffer.append(previousArgs + completion)
-                        cursorPosition = buffer.length
-                        print(buffer.toString())
-                        if (!currentInput.endsWith(" ")) {
-                            buffer.append(" ")
-                            cursorPosition++
-                            print(" ")
-                        }
-                        System.out.flush()
-                    }
-                    completions.isEmpty() && currentWord.isNotEmpty() && !currentInput.endsWith(" ") -> {
-                        // No matches found for a non-empty command, ring the bell
-                        print("\u0007") // Bell character \a
-                        System.out.flush()
-                    }
+                    System.out.flush()
+                    lastTabPressTime = System.currentTimeMillis()
                 }
             }
-            // For arguments after the command, we won't implement specific completion yet
-        }    }
+        }
+
+        private var lastTabPressTime: Long? = null
+    }
+
 
     private fun executeCommand(command: Command, pathCommands: Map<String, String>, redirects: Redirections) {
         fun createFileWithDirs(path: String, append: Boolean): FileOutputStream? {
@@ -180,26 +172,30 @@ class Shell {
 
         try {
             when (command) {
-                is Command.Exit -> { }
+                is Command.Exit -> {}
                 is Command.Cd -> changeDirectory(command.directory)
                 is Command.Pwd -> {
                     val output = "$currentDirectory\n"
                     stdoutStream?.write(output.toByteArray()) ?: print(output)
                 }
+
                 is Command.Type -> {
                     val output = handleTypeCommand(command.argument, pathCommands) + "\n"
                     stdoutStream?.write(output.toByteArray()) ?: print(output)
                 }
+
                 is Command.Echo -> {
                     val output = "${command.text}\n"
                     stdoutStream?.write(output.toByteArray()) ?: print(output)
                 }
+
                 is Command.Kill -> handleKillCommand(command.pid, stderrStream)
                 is Command.ExternalCommand -> {
                     ProcessBuilder("/bin/sh", "-c", "stty sane").inheritIO().start().waitFor()
                     commandExecutor.execute(command.args, currentDirectory.toFile(), env, stdoutStream, stderrStream)
                     ProcessBuilder("/bin/sh", "-c", "stty raw -echo").inheritIO().start().waitFor()
                 }
+
                 is Command.Unknown -> {
                     val errorMsg = "${command.input}: command not found\n"
                     stderrStream?.write(errorMsg.toByteArray()) ?: System.err.print(errorMsg)
@@ -387,14 +383,17 @@ class InputParser {
                     stderr = file.trim()
                     stderrAppend = true
                 }
+
                 "2>" -> {
                     stderr = file.trim()
                     stderrAppend = false
                 }
+
                 ">>", "1>>" -> {
                     stdout = file.trim()
                     stdoutAppend = true
                 }
+
                 ">", "1>" -> {
                     stdout = file.trim()
                     stdoutAppend = false
@@ -419,6 +418,7 @@ class InputParser {
                     }
                     i++
                 }
+
                 SINGLE_QUOTE -> {
                     // Single-quoted: take everything literally (backslashes remain)
                     i++ // skip opening '
@@ -430,6 +430,7 @@ class InputParser {
                         i++ // skip closing '
                     }
                 }
+
                 DOUBLE_QUOTE -> {
                     // Double-quoted: backslash escapes ", \, $, and `
                     i++ // skip opening "
@@ -452,6 +453,7 @@ class InputParser {
                         i++ // skip closing "
                     }
                 }
+
                 BACKSLASH -> {
                     // Outside quotes: backslash escapes next character.
                     if (i + 1 < input.length) {
@@ -461,6 +463,7 @@ class InputParser {
                         i++
                     }
                 }
+
                 else -> {
                     currentArg.append(c)
                     i++
