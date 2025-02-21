@@ -128,6 +128,10 @@ class Shell {
                         print(" ")
                     }
                     System.out.flush()
+                } else if (completions.isEmpty() && currentWord.isNotEmpty() && !currentInput.endsWith(" ")) {
+                    // No matches found for a non-empty command, ring the bell
+                    print("\u0007") // Bell character \a
+                    System.out.flush()
                 }
             }
             // For arguments after the command, we won't implement specific completion yet
@@ -205,10 +209,25 @@ class Shell {
 
     private fun handleTypeCommand(argument: String?, pathCommands: Map<String, String>): String {
         if (argument == null) return "type: missing argument"
+
+        // Check if the command is a built-in command
         if (BuiltInCommands.entries.any { it.name.equals(argument, ignoreCase = true) }) {
             return "$argument is a shell builtin"
         }
-        return pathCommands[argument]?.let { "$argument is $it" } ?: "$argument: not found"
+
+        // Check if the command is in the predefined pathCommands map
+        pathCommands[argument]?.let { return "$argument is $it" }
+
+        // If the command isn't found in predefined pathCommands, search for it in the system path
+        val pathDirs = System.getenv("PATH").split(File.pathSeparator)
+        for (dir in pathDirs) {
+            val filePath = File(dir, argument)
+            if (filePath.exists() && filePath.canExecute()) {
+                return "$argument is ${filePath.absolutePath}"
+            }
+        }
+
+        return "$argument: not found"
     }
 
     private fun handleKillCommand(pid: String?, stderrStream: OutputStream?) {
