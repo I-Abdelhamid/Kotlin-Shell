@@ -23,7 +23,6 @@ class Shell {
     private val env = System.getenv().toMutableMap()
 
     fun start() {
-        // Print the prompt once before starting the input loop.
         printPrompt()
         while (true) {
             val inputLine = reader.readLine().trimEnd()
@@ -36,8 +35,6 @@ class Shell {
             try {
                 val pathCommands = PathCommandsLoader.load(env["PATH"] ?: "")
                 val (parsedCommand, redirects) = inputParser.parse(inputLine, pathCommands)
-
-                // Execute the command
                 executeCommand(parsedCommand, pathCommands, redirects)
             } catch (e: Exception) {
                 println("Error: ${e.message}")
@@ -47,7 +44,6 @@ class Shell {
     }
 
     private fun printPrompt() {
-        // Print prompt using carriage return and ANSI clear sequence.
         print("\r\u001B[K$ ")
         System.out.flush()
     }
@@ -63,18 +59,17 @@ class Shell {
             while (true) {
                 val input = System.`in`.read()
                 when (input) {
-                    -1 -> return buffer.toString()  // End of input
-                    9 -> handleTabCompletion()       // Tab completion
-                    10, 13 -> {                     // Newline or carriage return
+                    -1 -> return buffer.toString()
+                    9 -> handleTabCompletion()
+                    10, 13 -> {
                         val result = buffer.toString().trimEnd()
-                        // Print newline plus clear sequence.
                         print("\r\n\u001B[K")
                         System.out.flush()
                         buffer.clear()
                         cursorPosition = 0
                         return result
                     }
-                    127 -> {  // Backspace
+                    127 -> {
                         if (buffer.isNotEmpty() && cursorPosition > 0) {
                             buffer.deleteCharAt(cursorPosition - 1)
                             cursorPosition--
@@ -116,7 +111,6 @@ class Shell {
         fun createFileWithDirs(path: String, append: Boolean): FileOutputStream? {
             return try {
                 val file = File(path)
-                // Ensure the parent directories exist
                 val parentDir = file.parentFile
                 if (parentDir != null && !parentDir.exists()) {
                     parentDir.mkdirs()
@@ -133,7 +127,7 @@ class Shell {
 
         try {
             when (command) {
-                is Command.Exit -> { /* nothing to do */ }
+                is Command.Exit -> { }
                 is Command.Cd -> changeDirectory(command.directory)
                 is Command.Pwd -> {
                     val output = "$currentDirectory\n"
@@ -149,7 +143,6 @@ class Shell {
                 }
                 is Command.Kill -> handleKillCommand(command.pid, stderrStream)
                 is Command.ExternalCommand -> {
-                    // Temporarily disable raw mode so that external commands run normally.
                     ProcessBuilder("/bin/sh", "-c", "stty sane").inheritIO().start().waitFor()
                     commandExecutor.execute(command.args, currentDirectory.toFile(), env, stdoutStream, stderrStream)
                     ProcessBuilder("/bin/sh", "-c", "stty raw -echo").inheritIO().start().waitFor()
@@ -197,7 +190,7 @@ class Shell {
             return
         }
         try {
-            pid.toInt()  // validate PID
+            pid.toInt()
             val process = ProcessBuilder("kill", "-9", pid).start()
             process.waitFor()
             if (process.exitValue() != 0) {
@@ -227,7 +220,6 @@ class CommandExecutor {
 
         val process = processBuilder.start()
 
-        // Handle stdout synchronously.
         process.inputStream.use { input ->
             if (stdoutStream != null) {
                 input.copyTo(stdoutStream)
@@ -238,7 +230,6 @@ class CommandExecutor {
             }
         }
 
-        // Handle stderr synchronously.
         process.errorStream.use { error ->
             if (stderrStream != null) {
                 error.copyTo(stderrStream)
@@ -300,7 +291,6 @@ class InputParser {
         val (commandPart, redirections) = parseRedirections(input)
         val args = parseArguments(commandPart)
         if (args.isEmpty()) return Pair(Command.Unknown(commandPart), redirections)
-
         val command = when (args[0]) {
             "exit" -> Command.Exit
             "cd" -> Command.Cd(args.getOrNull(1))
@@ -308,7 +298,8 @@ class InputParser {
             "type" -> Command.Type(args.getOrNull(1))
             "echo" -> Command.Echo(args.drop(1).joinToString(" "))
             "kill" -> Command.Kill(args.getOrNull(1))
-            else -> if (pathCommands.containsKey(args[0])) Command.ExternalCommand(args) else Command.Unknown(args[0])
+            else -> if (pathCommands.containsKey(args[0])) Command.ExternalCommand(args)
+            else Command.Unknown(args[0])
         }
         return Pair(command, redirections)
     }
@@ -319,11 +310,8 @@ class InputParser {
         var stderr: String? = null
         var stdoutAppend = false
         var stderrAppend = false
-
-        // Allow an optional "1" before stdout redirection operators.
         val pattern = "\\s*((?:1)?>>|(?:1)?>|2>>|2>)\\s*([^\\s>]+)".toRegex()
         val matches = pattern.findAll(input)
-
         for (match in matches) {
             val (operator, file) = match.destructured
             when (operator.trim()) {
@@ -346,67 +334,74 @@ class InputParser {
             }
             commandPart = commandPart.replace(match.value, "")
         }
-
         return Pair(commandPart.trim(), Redirections(stdout, stderr, stdoutAppend, stderrAppend))
     }
 
+    // New implementation of parseArguments supporting proper quoting.
     private fun parseArguments(input: String): List<String> {
         val args = mutableListOf<String>()
-        val sb = StringBuilder()
-        var inQuotes = false
-        var quoteChar: Char? = null
+        val currentArg = StringBuilder()
         var i = 0
-
         while (i < input.length) {
-            val c = input[i]
-            if (inQuotes) {
-                when {
-                    c == quoteChar -> {
-                        inQuotes = false
-                        quoteChar = null
+            when (val c = input[i]) {
+                ' ', '\t', '\n', '\r' -> {
+                    if (currentArg.isNotEmpty()) {
+                        args.add(currentArg.toString())
+                        currentArg.clear()
+                    }
+                    i++
+                }
+                SINGLE_QUOTE -> {
+                    // Single-quoted: take everything literally (backslashes remain)
+                    i++ // skip opening '
+                    while (i < input.length && input[i] != SINGLE_QUOTE) {
+                        currentArg.append(input[i])
                         i++
                     }
-                    // In double quotes, allow escaping of ", \, and '.
-                    c == BACKSLASH && quoteChar == DOUBLE_QUOTE && i + 1 < input.length -> {
-                        val next = input[i + 1]
-                        if (next in setOf(DOUBLE_QUOTE, BACKSLASH, SINGLE_QUOTE)) {
-                            sb.append(next)
-                        } else {
-                            sb.append(c)
-                        }
-                        i += 2
+                    if (i < input.length && input[i] == SINGLE_QUOTE) {
+                        i++ // skip closing '
                     }
-                    else -> {
-                        sb.append(c)
+                }
+                DOUBLE_QUOTE -> {
+                    // Double-quoted: backslash escapes ", \, $, and `
+                    i++ // skip opening "
+                    while (i < input.length && input[i] != DOUBLE_QUOTE) {
+                        if (input[i] == BACKSLASH && i + 1 < input.length) {
+                            val next = input[i + 1]
+                            if (next == DOUBLE_QUOTE || next == BACKSLASH || next == '$' || next == '`') {
+                                currentArg.append(next)
+                                i += 2
+                            } else {
+                                currentArg.append(BACKSLASH)
+                                i++
+                            }
+                        } else {
+                            currentArg.append(input[i])
+                            i++
+                        }
+                    }
+                    if (i < input.length && input[i] == DOUBLE_QUOTE) {
+                        i++ // skip closing "
+                    }
+                }
+                BACKSLASH -> {
+                    // Outside quotes: backslash escapes next character.
+                    if (i + 1 < input.length) {
+                        currentArg.append(input[i + 1])
+                        i += 2
+                    } else {
                         i++
                     }
                 }
-            } else {
-                when {
-                    c.isWhitespace() -> {
-                        if (sb.isNotEmpty()) {
-                            args.add(sb.toString())
-                            sb.clear()
-                        }
-                        i++
-                    }
-                    c == SINGLE_QUOTE || c == DOUBLE_QUOTE -> {
-                        inQuotes = true
-                        quoteChar = c
-                        i++
-                    }
-                    c == BACKSLASH && i + 1 < input.length -> {
-                        sb.append(input[i + 1])
-                        i += 2
-                    }
-                    else -> {
-                        sb.append(c)
-                        i++
-                    }
+                else -> {
+                    currentArg.append(c)
+                    i++
                 }
             }
         }
-        if (sb.isNotEmpty()) args.add(sb.toString())
+        if (currentArg.isNotEmpty()) {
+            args.add(currentArg.toString())
+        }
         return args
     }
 }
