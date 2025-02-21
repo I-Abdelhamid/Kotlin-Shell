@@ -33,6 +33,27 @@
               <type>pom</type>
               <scope>import</scope>
           </dependency>
+          <!-- JUnit 5 dependencies -->
+          <dependency>
+              <groupId>org.junit.jupiter</groupId>
+              <artifactId>junit-jupiter-api</artifactId>
+              <version>5.7.0</version>
+              <scope>test</scope>
+          </dependency>
+          <dependency>
+              <groupId>org.junit.jupiter</groupId>
+              <artifactId>junit-jupiter-engine</artifactId>
+              <version>5.7.0</version>
+              <scope>test</scope>
+          </dependency>
+
+          <!-- JUnit Vintage for backward compatibility -->
+          <dependency>
+              <groupId>org.junit.vintage</groupId>
+              <artifactId>junit-vintage-engine</artifactId>
+              <version>5.7.0</version>
+              <scope>test</scope>
+          </dependency>
       </dependencies>
     </dependencyManagement>
 
@@ -90,6 +111,12 @@
         <dependency>
             <groupId>org.jetbrains.kotlin</groupId>
             <artifactId>kotlin-stdlib</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.8.1</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 </project>
