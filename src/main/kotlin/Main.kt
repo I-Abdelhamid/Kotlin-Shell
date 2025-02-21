@@ -90,20 +90,48 @@ class Shell {
         }
 
         private fun handleTabCompletion() {
-            val currentInput = buffer.toString().trimEnd()
-            val completions = builtins.filter { it.startsWith(currentInput) }
-            if (completions.size == 1) {
-                val completion = completions[0]
-                repeat(buffer.length) { print("\b \b") }
-                buffer.clear()
-                buffer.append(completion)
-                cursorPosition = completion.length
-                print(completion)
-                buffer.append(" ")
-                cursorPosition++
-                print(" ")
-                System.out.flush()
+            val currentInput = buffer.toString()
+            val trimmedInput = currentInput.trimEnd()
+
+            // Split input into words based on whitespace
+            val words = trimmedInput.split("\\s+".toRegex())
+            val cursorAtEnd = cursorPosition == currentInput.length
+
+            if (!cursorAtEnd) {
+                // If cursor isn't at end, don't perform completion
+                return
             }
+
+            if (words.isEmpty()) {
+                return
+            }
+
+            // If we're completing the first word (command)
+            if (words.size == 1 || (words.size > 1 && currentInput.endsWith(" "))) {
+                val currentWord = if (currentInput.endsWith(" ")) "" else words.last()
+                val previousArgs = if (words.size > 1) words.dropLast(1).joinToString(" ") + " " else ""
+
+                val completions = builtins.filter { it.startsWith(currentWord) }
+                if (completions.size == 1) {
+                    val completion = completions[0]
+                    // Clear the current line
+                    repeat(buffer.length) { print("\b \b") }
+                    buffer.clear()
+                    // Add previous arguments (if any) and completed command
+                    buffer.append(previousArgs + completion)
+                    cursorPosition = buffer.length
+                    print(buffer.toString())
+                    // Add space after command if it wasn't there
+                    if (!currentInput.endsWith(" ")) {
+                        buffer.append(" ")
+                        cursorPosition++
+                        print(" ")
+                    }
+                    System.out.flush()
+                }
+            }
+            // For arguments after the command, we won't implement specific completion yet
+            // but allow the user to continue typing
         }
     }
 
