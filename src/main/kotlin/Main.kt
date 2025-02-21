@@ -51,6 +51,8 @@ class Shell {
         private val builtins = listOf("echo", "exit", "type", "cd", "pwd", "kill")
         private val buffer = StringBuilder()
         private var cursorPosition = 0
+        private var lastTabPressTime: Long? = null
+        private var lastTabInput: String? = null // Track input at last tab press
 
         fun readLine(): String {
             buffer.clear()
@@ -89,7 +91,6 @@ class Shell {
                 }
             }
         }
-
         private fun handleTabCompletion() {
             val currentInput = buffer.toString()
             val trimmedInput = currentInput.trimEnd()
@@ -101,54 +102,79 @@ class Shell {
             if (words.isEmpty()) return
 
             val currentWord = if (currentInput.endsWith(" ")) "" else words.last()
-            if (words.size > 1) words.dropLast(1).joinToString(" ") + " " else ""
+            val previousArgs = if (words.size > 1) words.dropLast(1).joinToString(" ") + " " else ""
 
-            // Always reload PATH commands to catch any changes
             val pathCommands = PathCommandsLoader.load(env["PATH"] ?: "")
             val allCommands = (builtins + pathCommands.keys).distinct()
             val completions = allCommands.filter { it.startsWith(currentWord) }.sorted()
 
             when {
                 completions.isEmpty() && currentWord.isNotEmpty() && !currentInput.endsWith(" ") -> {
-                    print("\u0007") // Bell character
+                    print("\u0007")
                     System.out.flush()
                 }
-
                 completions.size == 1 -> {
                     val completion = completions[0]
-                    // Clear the current word on screen
                     repeat(currentWord.length) {
                         print("\b \b")
                     }
-                    // Update buffer with the full completion
-                    buffer.delete(buffer.length - currentWord.length, buffer.length) // Remove currentWord
-                    buffer.append(completion) // Append full completion
-                    // Print the full completion
+                    buffer.delete(buffer.length - currentWord.length, buffer.length)
+                    buffer.append(completion)
                     print(completion)
-                    // Add space after command if not already present
                     if (!currentInput.endsWith(" ")) {
                         buffer.append(" ")
                         print(" ")
                     }
                     cursorPosition = buffer.length
                     System.out.flush()
+                    lastTabPressTime = System.currentTimeMillis()
+                    lastTabInput = buffer.toString()
                 }
-
                 completions.size > 1 -> {
-                    if (lastTabPressTime != null && System.currentTimeMillis() - lastTabPressTime!! < 1000) {
+                    val lcp = longestCommonPrefix(completions)
+                    val isDoubleTab = lastTabPressTime != null &&
+                            System.currentTimeMillis() - lastTabPressTime!! < 1000 &&
+                            currentInput == lastTabInput
+
+                    if (isDoubleTab) {
+                        // Double TAB: List all completions
                         print("\r\n${completions.joinToString("  ")}\r\n")
                         printPrompt()
                         print(buffer.toString())
+                        System.out.flush()
                     } else {
-                        print("\u0007") // Bell character for first tab press
+                        // Single TAB: Complete to longest common prefix
+                        if (lcp != currentWord) {
+                            repeat(currentWord.length) {
+                                print("\b \b")
+                            }
+                            buffer.delete(buffer.length - currentWord.length, buffer.length)
+                            buffer.append(lcp)
+                            print(lcp)
+                            cursorPosition = buffer.length
+                            System.out.flush()
+                        } else {
+                            print("\u0007")
+                            System.out.flush()
+                        }
                     }
-                    System.out.flush()
                     lastTabPressTime = System.currentTimeMillis()
+                    lastTabInput = buffer.toString()
                 }
             }
         }
 
-        private var lastTabPressTime: Long? = null
+        private fun longestCommonPrefix(strings: List<String>): String {
+            if (strings.isEmpty()) return ""
+            if (strings.size == 1) return strings[0]
+            var prefix = strings[0]
+            for (i in 1 until strings.size) {
+                prefix = prefix.commonPrefixWith(strings[i])
+                if (prefix.isEmpty()) break
+            }
+            return prefix
+        }
+
     }
 
 
