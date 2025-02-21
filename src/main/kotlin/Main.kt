@@ -111,33 +111,54 @@ class Shell {
                 val currentWord = if (currentInput.endsWith(" ")) "" else words.last()
                 val previousArgs = if (words.size > 1) words.dropLast(1).joinToString(" ") + " " else ""
 
-                val completions = builtins.filter { it.startsWith(currentWord) }
-                if (completions.size == 1) {
-                    val completion = completions[0]
-                    // Clear the current line
-                    repeat(buffer.length) { print("\b \b") }
-                    buffer.clear()
-                    // Add previous arguments (if any) and completed command
-                    buffer.append(previousArgs + completion)
-                    cursorPosition = buffer.length
-                    print(buffer.toString())
-                    // Add space after command if it wasn't there
-                    if (!currentInput.endsWith(" ")) {
-                        buffer.append(" ")
-                        cursorPosition++
-                        print(" ")
+                // Combine builtins and external commands from PATH
+                val pathCommands = PathCommandsLoader.load(env["PATH"] ?: "")
+                val allCommands = builtins + pathCommands.keys
+                val completions = allCommands.filter { it.startsWith(currentWord) }
+
+                when {
+                    completions.size == 1 -> {
+                        val completion = completions[0]
+                        // Clear the current line
+                        repeat(buffer.length) { print("\b \b") }
+                        buffer.clear()
+                        // Add previous arguments (if any) and completed command
+                        buffer.append(previousArgs + completion)
+                        cursorPosition = buffer.length
+                        print(buffer.toString())
+                        // Add space after command if it wasn't there
+                        if (!currentInput.endsWith(" ")) {
+                            buffer.append(" ")
+                            cursorPosition++
+                            print(" ")
+                        }
+                        System.out.flush()
                     }
-                    System.out.flush()
-                } else if (completions.isEmpty() && currentWord.isNotEmpty() && !currentInput.endsWith(" ")) {
-                    // No matches found for a non-empty command, ring the bell
-                    print("\u0007") // Bell character \a
-                    System.out.flush()
+                    completions.size > 1 -> {
+                        // For multiple matches, we could list them, but for this task
+                        // we'll just take the first match to keep it simple
+                        val completion = completions[0]
+                        repeat(buffer.length) { print("\b \b") }
+                        buffer.clear()
+                        buffer.append(previousArgs + completion)
+                        cursorPosition = buffer.length
+                        print(buffer.toString())
+                        if (!currentInput.endsWith(" ")) {
+                            buffer.append(" ")
+                            cursorPosition++
+                            print(" ")
+                        }
+                        System.out.flush()
+                    }
+                    completions.isEmpty() && currentWord.isNotEmpty() && !currentInput.endsWith(" ") -> {
+                        // No matches found for a non-empty command, ring the bell
+                        print("\u0007") // Bell character \a
+                        System.out.flush()
+                    }
                 }
             }
             // For arguments after the command, we won't implement specific completion yet
-            // but allow the user to continue typing
-        }
-    }
+        }    }
 
     private fun executeCommand(command: Command, pathCommands: Map<String, String>, redirects: Redirections) {
         fun createFileWithDirs(path: String, append: Boolean): FileOutputStream? {
