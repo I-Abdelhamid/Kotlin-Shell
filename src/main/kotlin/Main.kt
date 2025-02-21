@@ -5,6 +5,7 @@ import java.nio.file.Files
 import java.nio.file.Paths
 
 fun main() {
+    // Enable raw mode (disable echo)
     ProcessBuilder("/bin/sh", "-c", "stty raw -echo").inheritIO().start().waitFor()
     try {
         val shell = Shell()
@@ -22,29 +23,33 @@ class Shell {
     private val env = System.getenv().toMutableMap()
 
     fun start() {
-        var shouldContinue = true
-        while (shouldContinue) {
-            shouldContinue = promptAndExecute()
+        // Print the prompt once before starting the input loop.
+        printPrompt()
+        while (true) {
+            val inputLine = reader.readLine().trimEnd()
+            if (inputLine.isBlank()) {
+                printPrompt()
+                continue
+            }
+            if (inputLine == "exit" || inputLine == "exit 0") break
+
+            try {
+                val pathCommands = PathCommandsLoader.load(env["PATH"] ?: "")
+                val (parsedCommand, redirects) = inputParser.parse(inputLine, pathCommands)
+
+                // Execute the command
+                executeCommand(parsedCommand, pathCommands, redirects)
+            } catch (e: Exception) {
+                println("Error: ${e.message}")
+            }
+            printPrompt()
         }
     }
 
-    private fun promptAndExecute(): Boolean {
-        print("$ ")
+    private fun printPrompt() {
+        // Print prompt using carriage return and ANSI clear sequence.
+        print("\r\u001B[K$ ")
         System.out.flush()
-        val inputLine = reader.readLine()
-        if (inputLine.isBlank()) return true
-        if (inputLine == "exit" || inputLine == "exit 0") return false
-
-        try {
-            val pathCommands = PathCommandsLoader.load(env["PATH"] ?: "")
-            val (parsedCommand, redirects) = inputParser.parse(inputLine, pathCommands)
-            print("\r")
-            System.out.flush()
-            executeCommand(parsedCommand, pathCommands, redirects)
-        } catch (e: Exception) {
-            println("Error: ${e.message}")
-        }
-        return true
     }
 
     private inner class ConsoleReader {
@@ -58,17 +63,18 @@ class Shell {
             while (true) {
                 val input = System.`in`.read()
                 when (input) {
-                    -1 -> return buffer.toString()
-                    9 -> handleTabCompletion()
-                    13 -> {
+                    -1 -> return buffer.toString()  // End of input
+                    9 -> handleTabCompletion()       // Tab completion
+                    10, 13 -> {                     // Newline or carriage return
                         val result = buffer.toString().trimEnd()
-                        print("\n")
+                        // Print newline plus clear sequence.
+                        print("\r\n\u001B[K")
                         System.out.flush()
                         buffer.clear()
                         cursorPosition = 0
                         return result
                     }
-                    127 -> {
+                    127 -> {  // Backspace
                         if (buffer.isNotEmpty() && cursorPosition > 0) {
                             buffer.deleteCharAt(cursorPosition - 1)
                             cursorPosition--
@@ -78,7 +84,7 @@ class Shell {
                     }
                     else -> {
                         val char = input.toChar()
-                        if (char.isISOControl()) continue
+                        if (char.isISOControl() && char != '\t') continue
                         buffer.insert(cursorPosition, char)
                         cursorPosition++
                         print(char)
@@ -98,11 +104,9 @@ class Shell {
                 buffer.append(completion)
                 cursorPosition = completion.length
                 print(completion)
-                if (!completion.endsWith(" ")) {
-                    buffer.append(" ")
-                    cursorPosition++
-                    print(" ")
-                }
+                buffer.append(" ")
+                cursorPosition++
+                print(" ")
                 System.out.flush()
             }
         }
@@ -112,10 +116,14 @@ class Shell {
         fun createFileWithDirs(path: String, append: Boolean): FileOutputStream? {
             return try {
                 val file = File(path)
-                file.parentFile?.mkdirs()
+                // Ensure the parent directories exist
+                val parentDir = file.parentFile
+                if (parentDir != null && !parentDir.exists()) {
+                    parentDir.mkdirs()
+                }
                 FileOutputStream(file, append)
             } catch (e: Exception) {
-                System.err.println("Failed to create file: $path")
+                System.err.println("Failed to create file: $path. Error: ${e.message}")
                 null
             }
         }
@@ -125,7 +133,7 @@ class Shell {
 
         try {
             when (command) {
-                is Command.Exit -> {}
+                is Command.Exit -> { /* nothing to do */ }
                 is Command.Cd -> changeDirectory(command.directory)
                 is Command.Pwd -> {
                     val output = "$currentDirectory\n"
@@ -141,7 +149,10 @@ class Shell {
                 }
                 is Command.Kill -> handleKillCommand(command.pid, stderrStream)
                 is Command.ExternalCommand -> {
+                    // Temporarily disable raw mode so that external commands run normally.
+                    ProcessBuilder("/bin/sh", "-c", "stty sane").inheritIO().start().waitFor()
                     commandExecutor.execute(command.args, currentDirectory.toFile(), env, stdoutStream, stderrStream)
+                    ProcessBuilder("/bin/sh", "-c", "stty raw -echo").inheritIO().start().waitFor()
                 }
                 is Command.Unknown -> {
                     val errorMsg = "${command.input}: command not found\n"
@@ -186,7 +197,7 @@ class Shell {
             return
         }
         try {
-            val pidNum = pid.toInt()
+            pid.toInt()  // validate PID
             val process = ProcessBuilder("kill", "-9", pid).start()
             process.waitFor()
             if (process.exitValue() != 0) {
@@ -197,6 +208,48 @@ class Shell {
             val errorMsg = "kill: $pid: Invalid PID\n"
             stderrStream?.write(errorMsg.toByteArray()) ?: System.err.print(errorMsg)
         }
+    }
+}
+
+class CommandExecutor {
+    fun execute(
+        command: List<String>,
+        directory: File,
+        env: Map<String, String>,
+        stdoutStream: OutputStream?,
+        stderrStream: OutputStream?
+    ) {
+        val processBuilder = ProcessBuilder(command)
+        processBuilder.directory(directory)
+        processBuilder.environment().putAll(env)
+        processBuilder.redirectOutput(ProcessBuilder.Redirect.PIPE)
+        processBuilder.redirectError(ProcessBuilder.Redirect.PIPE)
+
+        val process = processBuilder.start()
+
+        // Handle stdout synchronously.
+        process.inputStream.use { input ->
+            if (stdoutStream != null) {
+                input.copyTo(stdoutStream)
+                stdoutStream.flush()
+            } else {
+                input.copyTo(System.out)
+                System.out.flush()
+            }
+        }
+
+        // Handle stderr synchronously.
+        process.errorStream.use { error ->
+            if (stderrStream != null) {
+                error.copyTo(stderrStream)
+                stderrStream.flush()
+            } else {
+                error.copyTo(System.err)
+                System.err.flush()
+            }
+        }
+
+        process.waitFor()
     }
 }
 
@@ -238,40 +291,6 @@ object PathCommandsLoader {
     }
 }
 
-class CommandExecutor {
-    fun execute(
-        command: List<String>,
-        directory: File,
-        env: Map<String, String>,
-        stdoutStream: OutputStream?,
-        stderrStream: OutputStream?
-    ) {
-        val processBuilder = ProcessBuilder(command)
-        processBuilder.directory(directory)
-        processBuilder.environment().putAll(env)
-        processBuilder.redirectOutput(if (stdoutStream != null) ProcessBuilder.Redirect.PIPE else ProcessBuilder.Redirect.INHERIT)
-        processBuilder.redirectError(if (stderrStream != null) ProcessBuilder.Redirect.PIPE else ProcessBuilder.Redirect.INHERIT)
-
-        val process = processBuilder.start()
-
-        val stdoutThread = stdoutStream?.let {
-            Thread {
-                process.inputStream.use { it.copyTo(stdoutStream) }
-            }.apply { start() }
-        }
-
-        val stderrThread = stderrStream?.let {
-            Thread {
-                process.errorStream.use { it.copyTo(stderrStream) }
-            }.apply { start() }
-        }
-
-        process.waitFor()
-        stdoutThread?.join()
-        stderrThread?.join()
-    }
-}
-
 class InputParser {
     private val SINGLE_QUOTE = '\''
     private val DOUBLE_QUOTE = '"'
@@ -289,7 +308,7 @@ class InputParser {
             "type" -> Command.Type(args.getOrNull(1))
             "echo" -> Command.Echo(args.drop(1).joinToString(" "))
             "kill" -> Command.Kill(args.getOrNull(1))
-            else -> if (pathCommands.containsKey(args[0])) Command.ExternalCommand(args) else Command.Unknown(commandPart)
+            else -> if (pathCommands.containsKey(args[0])) Command.ExternalCommand(args) else Command.Unknown(args[0])
         }
         return Pair(command, redirections)
     }
@@ -301,29 +320,33 @@ class InputParser {
         var stdoutAppend = false
         var stderrAppend = false
 
-        val parts = input.split("\\s*(2>>|2>|>>|>)\\s*".toRegex()).map { it.trim() }.filter { it.isNotEmpty() }
-        if (parts.size > 1) {
-            commandPart = parts[0]
-            for (i in 1 until parts.size step 2) {
-                val operator = input.substring(
-                    input.indexOf(parts[i - 1]) + parts[i - 1].length,
-                    input.indexOf(parts[i])
-                ).trim()
-                val target = parts[i]
-                when (operator) {
-                    "2>>" -> {
-                        stderr = target
-                        stderrAppend = true
-                    }
-                    "2>" -> stderr = target
-                    ">>" -> {
-                        stdout = target
-                        stdoutAppend = true
-                    }
-                    ">" -> stdout = target
+        // Allow an optional "1" before stdout redirection operators.
+        val pattern = "\\s*((?:1)?>>|(?:1)?>|2>>|2>)\\s*([^\\s>]+)".toRegex()
+        val matches = pattern.findAll(input)
+
+        for (match in matches) {
+            val (operator, file) = match.destructured
+            when (operator.trim()) {
+                "2>>" -> {
+                    stderr = file.trim()
+                    stderrAppend = true
+                }
+                "2>" -> {
+                    stderr = file.trim()
+                    stderrAppend = false
+                }
+                ">>", "1>>" -> {
+                    stdout = file.trim()
+                    stdoutAppend = true
+                }
+                ">", "1>" -> {
+                    stdout = file.trim()
+                    stdoutAppend = false
                 }
             }
+            commandPart = commandPart.replace(match.value, "")
         }
+
         return Pair(commandPart.trim(), Redirections(stdout, stderr, stdoutAppend, stderrAppend))
     }
 
@@ -343,9 +366,14 @@ class InputParser {
                         quoteChar = null
                         i++
                     }
+                    // In double quotes, allow escaping of ", \, and '.
                     c == BACKSLASH && quoteChar == DOUBLE_QUOTE && i + 1 < input.length -> {
                         val next = input[i + 1]
-                        if (next in setOf(DOUBLE_QUOTE, BACKSLASH)) sb.append(next)
+                        if (next in setOf(DOUBLE_QUOTE, BACKSLASH, SINGLE_QUOTE)) {
+                            sb.append(next)
+                        } else {
+                            sb.append(c)
+                        }
                         i += 2
                     }
                     else -> {
