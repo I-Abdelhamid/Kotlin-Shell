@@ -160,4 +160,3 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 - Inspired by the ["Build Your Own Shell" Challenge](https://app.codecrafters.io/courses/shell/overview) on CodeCrafters.
 - Built with ❤️ using Kotlin and Gradle.
-```
