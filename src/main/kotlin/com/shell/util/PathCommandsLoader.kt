@@ -3,8 +3,8 @@ package com.shell.util
 import java.io.File
 import java.nio.file.Paths
 
-object PathCommandsLoader {
-    fun load(path: String): Map<String, String> {
+open class PathCommandsLoader {
+    open fun load(path: String): Map<String, String> {
         val commands = mutableMapOf<String, String>()
         path.split(File.pathSeparator)
             .map { Paths.get(it).toAbsolutePath().normalize().toString() }

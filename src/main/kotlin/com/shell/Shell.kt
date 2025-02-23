@@ -7,18 +7,18 @@ import com.shell.util.PathCommandsLoader
 import com.shell.util.Redirections
 import commands.BuiltInCommands
 import commands.Command
-import java.nio.file.Paths
-import java.nio.file.Files
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.OutputStream
+import java.nio.file.Files
+import java.nio.file.Paths
 
 class Shell {
     private val commandExecutor = CommandExecutor()
     private val inputParser = InputParser()
-    private var currentDirectory = Paths.get("").toAbsolutePath()
-    private val reader = ConsoleReader()
+    internal var currentDirectory = Paths.get("").toAbsolutePath()
+    private val reader = ConsoleReader(PathCommandsLoader())
     private val env = System.getenv().toMutableMap()
 
     fun start() {
@@ -32,7 +32,7 @@ class Shell {
             if (inputLine == "exit" || inputLine == "exit 0") break
 
             try {
-                val pathCommands = PathCommandsLoader.load(env["PATH"] ?: "")
+                val pathCommands = PathCommandsLoader().load(env["PATH"] ?: "")
                 val (parsedCommand, redirects) = inputParser.parse(inputLine, pathCommands)
                 executeCommand(parsedCommand, pathCommands, redirects)
             } catch (e: Exception) {
@@ -47,7 +47,7 @@ class Shell {
         System.out.flush()
     }
 
-    private fun executeCommand(command: Command, pathCommands: Map<String, String>, redirects: Redirections) {
+    internal fun executeCommand(command: Command, pathCommands: Map<String, String>, redirects: Redirections) {
         fun createFileWithDirs(path: String, append: Boolean): FileOutputStream? {
             return try {
                 val file = File(path)
@@ -107,7 +107,6 @@ class Shell {
             stderrStream?.close()
         }
     }
-
 
     private fun changeDirectory(dir: String?) {
         if (dir == null) {

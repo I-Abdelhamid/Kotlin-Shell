@@ -2,41 +2,41 @@ package com.shell.console
 
 import com.shell.util.PathCommandsLoader
 
-class ConsoleReader {
+class ConsoleReader(private val pathCommandsLoader: PathCommandsLoader) {
 
-    private val buffer = StringBuilder()  // Stores the input from the user
-    private var cursorPosition = 0       // Tracks the cursor position within the buffer
+    private val buffer = StringBuilder() // Stores the input from the user
+    private var cursorPosition = 0 // Tracks the cursor position within the buffer
     private var lastTabPressTime: Long? = null
     private var lastTabInput: String? = null // Tracks input at the last tab press
     private val builtins = listOf("echo", "exit", "type", "cd", "pwd", "kill") // Built-in commands
 
     fun readLine(): String {
-        buffer.clear()  // Reset buffer for new input
-        cursorPosition = 0  // Reset cursor position
+        buffer.clear() // Reset buffer for new input
+        cursorPosition = 0 // Reset cursor position
         while (true) {
-            val input = System.`in`.read()  // Read user input
+            val input = System.`in`.read()
             when (input) {
                 -1 -> return buffer.toString() // End of input
-                9 -> handleTabCompletion()  // Tab key for auto-completion
-                10, 13 -> {  // Enter key
+                9 -> handleTabCompletion() // Tab key for auto-completion
+                10, 13 -> { // Enter key
                     val result = buffer.toString().trimEnd()
-                    print("\r\n\u001B[K")  // Clear line after Enter
+                    print("\r\n\u001B[K") // Clear line after Enter
                     System.out.flush()
                     buffer.clear()
                     cursorPosition = 0
                     return result
                 }
-                127 -> {  // Backspace
+                127 -> { // Backspace
                     if (buffer.isNotEmpty() && cursorPosition > 0) {
                         buffer.deleteCharAt(cursorPosition - 1)
                         cursorPosition--
-                        print("\b \b")  // Delete character from console
+                        print("\b \b") // Delete character from console
                         System.out.flush()
                     }
                 }
                 else -> {
                     val char = input.toChar()
-                    if (char.isISOControl() && char != '\t') continue  // Skip control chars except tab
+                    if (char.isISOControl() && char != '\t') continue // Skip control chars except tab
                     buffer.insert(cursorPosition, char)
                     cursorPosition++
                     print(char)
@@ -59,24 +59,24 @@ class ConsoleReader {
         handleCompletions(currentWord, completions, prefix, currentInput)
     }
 
-    private fun isValidForCompletion(currentInput: String, trimmedInput: String): Boolean {
+    internal fun isValidForCompletion(currentInput: String, trimmedInput: String): Boolean {
         val cursorAtEnd = cursorPosition == currentInput.length
         return cursorAtEnd && trimmedInput.isNotEmpty()
     }
 
-    private fun extractWordInfo(words: List<String>, currentInput: String): Pair<String, String> {
+    internal fun extractWordInfo(words: List<String>, currentInput: String): Pair<String, String> {
         val currentWord = if (currentInput.endsWith(" ")) "" else words.last()
         val prefix = if (words.size > 1) words.dropLast(1).joinToString(" ") + " " else ""
         return currentWord to prefix
     }
 
-    private fun getCompletions(currentWord: String): List<String> {
-        val pathCommands = PathCommandsLoader.load(System.getenv("PATH") ?: "")
+    internal fun getCompletions(currentWord: String): List<String> {
+        val pathCommands = pathCommandsLoader.load(System.getenv("PATH") ?: "")
         val allCommands = (builtins + pathCommands.keys).distinct()
         return allCommands.filter { it.startsWith(currentWord) }.sorted()
     }
 
-    private fun handleCompletions(currentWord: String, completions: List<String>, prefix: String, currentInput: String) {
+    internal fun handleCompletions(currentWord: String, completions: List<String>, prefix: String, currentInput: String) {
         when {
             completions.isEmpty() && currentWord.isNotEmpty() && !currentInput.endsWith(" ") -> {
                 beep()
@@ -95,7 +95,7 @@ class ConsoleReader {
         System.out.flush()
     }
 
-    private fun completeSingle(completion: String, currentWord: String, currentInput: String) {
+    internal fun completeSingle(completion: String, currentWord: String, currentInput: String) {
         clearCurrentWord(currentWord)
         buffer.delete(buffer.length - currentWord.length, buffer.length)
         buffer.append(completion)
@@ -110,7 +110,7 @@ class ConsoleReader {
         updateTabTracking()
     }
 
-    private fun handleMultipleCompletions(completions: List<String>, currentWord: String, currentInput: String) {
+    internal fun handleMultipleCompletions(completions: List<String>, currentWord: String, currentInput: String) {
         val lcp = longestCommonPrefix(completions)
         val isDoubleTab = isDoubleTabPress(currentInput)
 
@@ -124,8 +124,8 @@ class ConsoleReader {
 
     private fun isDoubleTabPress(currentInput: String): Boolean {
         return lastTabPressTime != null &&
-                System.currentTimeMillis() - lastTabPressTime!! < 1000 &&
-                currentInput == lastTabInput
+            System.currentTimeMillis() - lastTabPressTime!! < 1000 &&
+            currentInput == lastTabInput
     }
 
     private fun showAllCompletions(completions: List<String>) {
@@ -158,7 +158,8 @@ class ConsoleReader {
         lastTabPressTime = System.currentTimeMillis()
         lastTabInput = buffer.toString()
     }
-    private fun longestCommonPrefix(strings: List<String>): String {
+
+    internal fun longestCommonPrefix(strings: List<String>): String {
         if (strings.isEmpty()) return ""
         if (strings.size == 1) return strings[0]
         var prefix = strings[0]

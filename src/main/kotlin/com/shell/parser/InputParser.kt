@@ -19,13 +19,16 @@ class InputParser {
             "type" -> Command.Type(args.getOrNull(1))
             "echo" -> Command.Echo(args.drop(1).joinToString(" "))
             "kill" -> Command.Kill(args.getOrNull(1))
-            else -> if (pathCommands.containsKey(args[0])) Command.ExternalCommand(args)
-            else Command.Unknown(args[0])
+            else -> if (pathCommands.containsKey(args[0])) {
+                Command.ExternalCommand(args)
+            } else {
+                Command.Unknown(args[0])
+            }
         }
         return Pair(command, redirections)
     }
 
-    private fun parseRedirections(input: String): Pair<String, Redirections> {
+    internal fun parseRedirections(input: String): Pair<String, Redirections> {
         var commandPart = input
         var stdout: String? = null
         var stderr: String? = null
@@ -61,7 +64,7 @@ class InputParser {
         return Pair(commandPart.trim(), Redirections(stdout, stderr, stdoutAppend, stderrAppend))
     }
 
-    private fun parseArguments(input: String): List<String> {
+    internal fun parseArguments(input: String): List<String> {
         val args = mutableListOf<String>()
         val currentArg = StringBuilder()
         var i = 0
@@ -131,5 +134,4 @@ class InputParser {
         }
         return args
     }
-
 }
