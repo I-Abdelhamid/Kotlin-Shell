@@ -1,4 +1,4 @@
-Here’s a revised version of your README.md that removes references to staging and focuses on showcasing what you’ve completed. It also highlights the Kotlin and Gradle setup, how to build the project, and the usage of the shell based on the test cases you’ve passed:
+Here’s the updated `README.md` with a section added for **Ktlint support**, including how to format and check your Kotlin code using Ktlint:
 
 ---
 
@@ -36,15 +36,15 @@ The following features have been implemented and tested:
 
 ### **Navigation**
 - **The `cd` Built-in**:
-   - Home directory (`cd ~`).
-   - Relative paths (`cd ./dir`).
-   - Absolute paths (`cd /tmp/dir`).
+    - Home directory (`cd ~`).
+    - Relative paths (`cd ./dir`).
+    - Absolute paths (`cd /tmp/dir`).
 - **The `pwd` Built-in**: Prints the current working directory.
 
 ### **Built-in Commands**
 - **The `type` Built-in**:
-   - Identifies executable files (e.g., `type cat`).
-   - Identifies built-in commands (e.g., `type echo`).
+    - Identifies executable files (e.g., `type cat`).
+    - Identifies built-in commands (e.g., `type echo`).
 - **The `echo` Built-in**: Prints arguments to standard output.
 - **The `exit` Built-in**: Exits the shell with a status code.
 
@@ -77,6 +77,32 @@ The following features have been implemented and tested:
    ./your_program.sh
    ```
 2. The shell will start in interactive mode, displaying a prompt (`$ `). You can now enter commands.
+
+---
+
+## Ktlint Support
+
+This project uses [Ktlint](https://ktlint.github.io/) to enforce Kotlin coding standards. Ktlint is integrated into the Gradle build process.
+
+### Format Code
+To automatically format your Kotlin code according to Ktlint rules, run:
+```bash
+./gradlew ktlintFormat
+```
+
+### Check Code Style
+To check your Kotlin code for style violations without fixing them, run:
+```bash
+./gradlew ktlintCheck
+```
+
+### Ktlint Configuration
+Ktlint is configured in the `build.gradle.kts` file:
+```kotlin
+plugins {
+    id("org.jlleitschuh.gradle.ktlint") version "11.6.1"
+}
+```
 
 ---
 
@@ -134,7 +160,4 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 - Inspired by the ["Build Your Own Shell" Challenge](https://app.codecrafters.io/courses/shell/overview) on CodeCrafters.
 - Built with ❤️ using Kotlin and Gradle.
-
----
-
-This README focuses on showcasing the completed features, how to build and run the project, and examples of usage. Let me know if you’d like further adjustments!
+```
