@@ -1,7 +1,3 @@
-Here’s the updated `README.md` with a section added for **Ktlint support**, including how to format and check your Kotlin code using Ktlint:
-
----
-
 # Kotlin Shell Implementation
 
 [![progress-banner](https://backend.codecrafters.io/progress/shell/4f30f11f-8d72-4f27-a193-d27fdc499579)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
